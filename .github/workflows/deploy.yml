@@ -9,10 +9,42 @@ on:
         description: 'AWS Region to deploy to'
         required: false
         default: 'us-east-1'
+      environment:
+        description: 'Environment to deploy to'
+        required: false
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+          - development
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest
+          
+      - name: Run tests
+        run: |
+          pytest test/
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
     
     steps:
       - name: Checkout code
@@ -35,6 +67,23 @@ jobs:
       - name: Terraform Init
         working-directory: ./terraform
         run: terraform init
+
+      - name: Terraform Validate
+        working-directory: ./terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: ./terraform
+        run: |
+          terraform plan \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="api_key=${{ secrets.API_KEY }}" \
+            -var="db_host=${{ secrets.DB_HOST }}" \
+            -var="db_name=${{ secrets.DB_NAME }}" \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -var="db_port=${{ secrets.DB_PORT }}" \
+            -var="db_user=${{ secrets.DB_USER }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}"
 
       - name: Create ECR Repository and IAM Roles
         working-directory: ./terraform
@@ -66,6 +115,8 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.login-ecr.outputs.registry }}/ai-doc-parser-ecr:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Deploy Remaining Infrastructure
         working-directory: ./terraform
@@ -78,4 +129,8 @@ jobs:
             -var="db_password=${{ secrets.DB_PASSWORD }}" \
             -var="db_port=${{ secrets.DB_PORT }}" \
             -var="db_user=${{ secrets.DB_USER }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" 
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}"
+
+      - name: Output API URL
+        working-directory: ./terraform
+        run: terraform output api_url
