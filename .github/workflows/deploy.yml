@@ -178,6 +178,77 @@ jobs:
             aws_api_gateway_rest_api.api ${{ steps.check_api.outputs.API_ID }}
         continue-on-error: true
 
+      - name: Import API Gateway Resources
+        if: steps.check_api.outputs.API_EXISTS == 'true'
+        working-directory: ./terraform
+        run: |
+          # First, get the API ID
+          API_ID=${{ steps.check_api.outputs.API_ID }}
+          
+          # Try to import the root resource
+          ROOT_RESOURCE_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/'].id" --output text)
+          if [ ! -z "$ROOT_RESOURCE_ID" ]; then
+            # Find the /api resource
+            API_RESOURCE_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api'].id" --output text)
+            if [ ! -z "$API_RESOURCE_ID" ]; then
+              terraform import \
+                -var="aws_region=${{ env.AWS_REGION }}" \
+                -var="api_key=${{ secrets.API_KEY }}" \
+                -var="db_host=${{ secrets.DB_HOST }}" \
+                -var="db_name=${{ secrets.DB_NAME }}" \
+                -var="db_password=${{ secrets.DB_PASSWORD }}" \
+                -var="db_port=${{ secrets.DB_PORT }}" \
+                -var="db_user=${{ secrets.DB_USER }}" \
+                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+                aws_api_gateway_resource.api_resource $API_ID/$ROOT_RESOURCE_ID/$API_RESOURCE_ID || true
+                
+              # Find and import other resources
+              PROCESS_DOC_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/process-document'].id" --output text)
+              TASK_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/task'].id" --output text)
+              TASK_ID_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/task/{task_id}'].id" --output text)
+              
+              if [ ! -z "$PROCESS_DOC_ID" ]; then
+                terraform import \
+                  -var="aws_region=${{ env.AWS_REGION }}" \
+                  -var="api_key=${{ secrets.API_KEY }}" \
+                  -var="db_host=${{ secrets.DB_HOST }}" \
+                  -var="db_name=${{ secrets.DB_NAME }}" \
+                  -var="db_password=${{ secrets.DB_PASSWORD }}" \
+                  -var="db_port=${{ secrets.DB_PORT }}" \
+                  -var="db_user=${{ secrets.DB_USER }}" \
+                  -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+                  aws_api_gateway_resource.process_document $API_ID/$API_RESOURCE_ID/$PROCESS_DOC_ID || true
+              fi
+              
+              if [ ! -z "$TASK_ID" ]; then
+                terraform import \
+                  -var="aws_region=${{ env.AWS_REGION }}" \
+                  -var="api_key=${{ secrets.API_KEY }}" \
+                  -var="db_host=${{ secrets.DB_HOST }}" \
+                  -var="db_name=${{ secrets.DB_NAME }}" \
+                  -var="db_password=${{ secrets.DB_PASSWORD }}" \
+                  -var="db_port=${{ secrets.DB_PORT }}" \
+                  -var="db_user=${{ secrets.DB_USER }}" \
+                  -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+                  aws_api_gateway_resource.task $API_ID/$API_RESOURCE_ID/$TASK_ID || true
+              fi
+              
+              if [ ! -z "$TASK_ID_ID" ]; then
+                terraform import \
+                  -var="aws_region=${{ env.AWS_REGION }}" \
+                  -var="api_key=${{ secrets.API_KEY }}" \
+                  -var="db_host=${{ secrets.DB_HOST }}" \
+                  -var="db_name=${{ secrets.DB_NAME }}" \
+                  -var="db_password=${{ secrets.DB_PASSWORD }}" \
+                  -var="db_port=${{ secrets.DB_PORT }}" \
+                  -var="db_user=${{ secrets.DB_USER }}" \
+                  -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+                  aws_api_gateway_resource.task_id $API_ID/$TASK_ID/$TASK_ID_ID || true
+              fi
+            fi
+          fi
+        continue-on-error: true
+
       - name: Terraform Validate
         working-directory: ./terraform
         run: terraform validate
@@ -227,6 +298,26 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
+      - name: Ensure Dockerfile is Lambda-compatible
+        run: |
+          # Ensure Dockerfile is using proper Lambda base image
+          if ! grep -q "FROM public.ecr.aws/lambda/python:" Dockerfile; then
+            echo "ERROR: Dockerfile doesn't use AWS Lambda base image. Please update your Dockerfile."
+            exit 1
+          fi
+          
+          # Ensure CMD is set correctly for Lambda
+          if ! grep -q 'CMD \[ "lambda_handler.handler" \]' Dockerfile; then
+            echo "Updating CMD for Lambda compatibility"
+            # If CMD exists, replace it
+            if grep -q "CMD " Dockerfile; then
+              sed -i 's|CMD .*|CMD [ "lambda_handler.handler" ]|' Dockerfile
+            else
+              # Add CMD if it doesn't exist
+              echo 'CMD [ "lambda_handler.handler" ]' >> Dockerfile
+            fi
+          fi
+
       - name: Build and push Docker image
         id: build_push
         uses: docker/build-push-action@v4
@@ -237,9 +328,12 @@ jobs:
           tags: ${{ steps.login-ecr.outputs.registry }}/ai-doc-parser-ecr:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            LAMBDA_TASK_ROOT=/var/task
+            AWS_LAMBDA_FUNCTION_HANDLER=lambda_handler.handler
 
-      - name: Deploy Remaining Infrastructure
-        id: deploy_infra
+      - name: Deploy S3 and API Gateway
+        id: deploy_non_lambda
         if: steps.build_push.outcome == 'success'
         working-directory: ./terraform
         run: |
@@ -251,10 +345,65 @@ jobs:
             -var="db_password=${{ secrets.DB_PASSWORD }}" \
             -var="db_port=${{ secrets.DB_PORT }}" \
             -var="db_user=${{ secrets.DB_USER }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}"
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            -target=aws_s3_bucket.ai_doc_parser \
+            -target=aws_s3_bucket_ownership_controls.ai_doc_parser \
+            -target=aws_api_gateway_rest_api.api \
+            -target=aws_api_gateway_resource.api_resource \
+            -target=aws_api_gateway_resource.process_document \
+            -target=aws_api_gateway_resource.task \
+            -target=aws_api_gateway_resource.task_id \
+            -target=aws_api_gateway_method.process_document_post \
+            -target=aws_api_gateway_method.task_id_get
+        continue-on-error: true
+
+      - name: Update Lambda Function
+        id: update_lambda
+        if: steps.build_push.outcome == 'success'
+        run: |
+          # First check if Lambda exists
+          if aws lambda get-function --function-name ai-doc-parser-lambda > /dev/null 2>&1; then
+            # Update existing Lambda
+            aws lambda update-function-code \
+              --function-name ai-doc-parser-lambda \
+              --image-uri ${{ steps.login-ecr.outputs.registry }}/ai-doc-parser-ecr:latest
+          else
+            # Try to create Lambda through Terraform
+            cd terraform
+            terraform apply -auto-approve \
+              -var="aws_region=${{ env.AWS_REGION }}" \
+              -var="api_key=${{ secrets.API_KEY }}" \
+              -var="db_host=${{ secrets.DB_HOST }}" \
+              -var="db_name=${{ secrets.DB_NAME }}" \
+              -var="db_password=${{ secrets.DB_PASSWORD }}" \
+              -var="db_port=${{ secrets.DB_PORT }}" \
+              -var="db_user=${{ secrets.DB_USER }}" \
+              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+              -target=aws_lambda_function.ai_doc_parser
+          fi
+        continue-on-error: true
+
+      - name: Deploy API Gateway Integrations and Deployment
+        id: deploy_integrations
+        working-directory: ./terraform
+        run: |
+          terraform apply -auto-approve \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="api_key=${{ secrets.API_KEY }}" \
+            -var="db_host=${{ secrets.DB_HOST }}" \
+            -var="db_name=${{ secrets.DB_NAME }}" \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -var="db_port=${{ secrets.DB_PORT }}" \
+            -var="db_user=${{ secrets.DB_USER }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            -target=aws_api_gateway_integration.process_document_integration \
+            -target=aws_api_gateway_integration.task_id_integration \
+            -target=aws_lambda_permission.api_gateway \
+            -target=aws_api_gateway_deployment.prod
+        continue-on-error: true
 
       - name: Output API URL
-        if: steps.deploy_infra.outcome == 'success'
+        if: steps.deploy_integrations.outcome == 'success'
         working-directory: ./terraform
         run: terraform output api_url
 
