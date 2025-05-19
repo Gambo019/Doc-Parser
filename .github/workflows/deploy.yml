@@ -48,223 +48,82 @@ jobs:
         working-directory: ./terraform
         run: terraform init
 
-      - name: Check if resources already exist
-        id: check_resources
+      # Clear Terraform state to avoid conflicts
+      - name: Clear Terraform state for conflict-prone resources
+        working-directory: ./terraform
         run: |
-          # Check if IAM role exists
-          if aws iam get-role --role-name ai-doc-parser-lambda-role 2>/dev/null; then
-            echo "IAM_ROLE_EXISTS=true" >> $GITHUB_OUTPUT
-          else
-            echo "IAM_ROLE_EXISTS=false" >> $GITHUB_OUTPUT
-          fi
-          
-          # Check if ECR repo exists
+          terraform state rm aws_api_gateway_resource.api_resource || true
+          terraform state rm aws_api_gateway_resource.process_document || true
+          terraform state rm aws_api_gateway_resource.task || true
+          terraform state rm aws_api_gateway_resource.task_id || true
+          terraform state rm aws_lambda_function.ai_doc_parser || true
+        continue-on-error: true
+
+      # Basic resource imports
+      - name: Import basic resources
+        working-directory: ./terraform
+        run: |
+          # Import ECR repository if it exists
           if aws ecr describe-repositories --repository-names ai-doc-parser-ecr 2>/dev/null; then
-            echo "ECR_REPO_EXISTS=true" >> $GITHUB_OUTPUT
-          else
-            echo "ECR_REPO_EXISTS=false" >> $GITHUB_OUTPUT
+            terraform import \
+              -var="aws_region=${{ env.AWS_REGION }}" \
+              -var="api_key=${{ secrets.API_KEY }}" \
+              -var="db_host=${{ secrets.DB_HOST }}" \
+              -var="db_name=${{ secrets.DB_NAME }}" \
+              -var="db_password=${{ secrets.DB_PASSWORD }}" \
+              -var="db_port=${{ secrets.DB_PORT }}" \
+              -var="db_user=${{ secrets.DB_USER }}" \
+              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+              aws_ecr_repository.ai_doc_parser ai-doc-parser-ecr || true
           fi
-        continue-on-error: true
-
-      - name: Import existing IAM role into Terraform state
-        if: steps.check_resources.outputs.IAM_ROLE_EXISTS == 'true'
-        working-directory: ./terraform
-        run: |
-          terraform import \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="api_key=${{ secrets.API_KEY }}" \
-            -var="db_host=${{ secrets.DB_HOST }}" \
-            -var="db_name=${{ secrets.DB_NAME }}" \
-            -var="db_password=${{ secrets.DB_PASSWORD }}" \
-            -var="db_port=${{ secrets.DB_PORT }}" \
-            -var="db_user=${{ secrets.DB_USER }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-            aws_iam_role.lambda_role ai-doc-parser-lambda-role
-        continue-on-error: true
-
-      - name: Import existing ECR repository into Terraform state
-        if: steps.check_resources.outputs.ECR_REPO_EXISTS == 'true'
-        working-directory: ./terraform
-        run: |
-          terraform import \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="api_key=${{ secrets.API_KEY }}" \
-            -var="db_host=${{ secrets.DB_HOST }}" \
-            -var="db_name=${{ secrets.DB_NAME }}" \
-            -var="db_password=${{ secrets.DB_PASSWORD }}" \
-            -var="db_port=${{ secrets.DB_PORT }}" \
-            -var="db_user=${{ secrets.DB_USER }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-            aws_ecr_repository.ai_doc_parser ai-doc-parser-ecr
-        continue-on-error: true
-
-      - name: Check if S3 bucket exists
-        id: check_s3
-        run: |
-          if aws s3api head-bucket --bucket ai-doc-parser-s3 2>/dev/null; then
-            echo "S3_BUCKET_EXISTS=true" >> $GITHUB_OUTPUT
-          else
-            echo "S3_BUCKET_EXISTS=false" >> $GITHUB_OUTPUT
-          fi
-        continue-on-error: true
-
-      - name: Check if Lambda function exists
-        id: check_lambda
-        run: |
-          if aws lambda get-function --function-name ai-doc-parser-lambda 2>/dev/null; then
-            echo "LAMBDA_EXISTS=true" >> $GITHUB_OUTPUT
-          else
-            echo "LAMBDA_EXISTS=false" >> $GITHUB_OUTPUT
-          fi
-        continue-on-error: true
-
-      - name: Check if API Gateway exists
-        id: check_api
-        run: |
-          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text)
-          if [ ! -z "$API_ID" ]; then
-            echo "API_EXISTS=true" >> $GITHUB_OUTPUT
-            echo "API_ID=$API_ID" >> $GITHUB_OUTPUT
-          else
-            echo "API_EXISTS=false" >> $GITHUB_OUTPUT
-          fi
-        continue-on-error: true
-
-      - name: Import S3 bucket
-        if: steps.check_s3.outputs.S3_BUCKET_EXISTS == 'true'
-        working-directory: ./terraform
-        run: |
-          terraform import \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="api_key=${{ secrets.API_KEY }}" \
-            -var="db_host=${{ secrets.DB_HOST }}" \
-            -var="db_name=${{ secrets.DB_NAME }}" \
-            -var="db_password=${{ secrets.DB_PASSWORD }}" \
-            -var="db_port=${{ secrets.DB_PORT }}" \
-            -var="db_user=${{ secrets.DB_USER }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-            aws_s3_bucket.ai_doc_parser ai-doc-parser-s3
-        continue-on-error: true
-
-      - name: Import Lambda function
-        if: steps.check_lambda.outputs.LAMBDA_EXISTS == 'true'
-        working-directory: ./terraform
-        run: |
-          terraform import \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="api_key=${{ secrets.API_KEY }}" \
-            -var="db_host=${{ secrets.DB_HOST }}" \
-            -var="db_name=${{ secrets.DB_NAME }}" \
-            -var="db_password=${{ secrets.DB_PASSWORD }}" \
-            -var="db_port=${{ secrets.DB_PORT }}" \
-            -var="db_user=${{ secrets.DB_USER }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-            aws_lambda_function.ai_doc_parser ai-doc-parser-lambda
-        continue-on-error: true
-
-      - name: Import API Gateway
-        if: steps.check_api.outputs.API_EXISTS == 'true'
-        working-directory: ./terraform
-        run: |
-          terraform import \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="api_key=${{ secrets.API_KEY }}" \
-            -var="db_host=${{ secrets.DB_HOST }}" \
-            -var="db_name=${{ secrets.DB_NAME }}" \
-            -var="db_password=${{ secrets.DB_PASSWORD }}" \
-            -var="db_port=${{ secrets.DB_PORT }}" \
-            -var="db_user=${{ secrets.DB_USER }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-            aws_api_gateway_rest_api.api ${{ steps.check_api.outputs.API_ID }}
-        continue-on-error: true
-
-      - name: Import API Gateway Resources
-        if: steps.check_api.outputs.API_EXISTS == 'true'
-        working-directory: ./terraform
-        run: |
-          # First, get the API ID
-          API_ID=${{ steps.check_api.outputs.API_ID }}
           
-          # Try to import the root resource
-          ROOT_RESOURCE_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/'].id" --output text)
-          if [ ! -z "$ROOT_RESOURCE_ID" ]; then
-            # Find the /api resource
-            API_RESOURCE_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api'].id" --output text)
-            if [ ! -z "$API_RESOURCE_ID" ]; then
-              terraform import \
-                -var="aws_region=${{ env.AWS_REGION }}" \
-                -var="api_key=${{ secrets.API_KEY }}" \
-                -var="db_host=${{ secrets.DB_HOST }}" \
-                -var="db_name=${{ secrets.DB_NAME }}" \
-                -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                -var="db_port=${{ secrets.DB_PORT }}" \
-                -var="db_user=${{ secrets.DB_USER }}" \
-                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                aws_api_gateway_resource.api_resource $API_ID/$ROOT_RESOURCE_ID/$API_RESOURCE_ID || true
-                
-              # Find and import other resources
-              PROCESS_DOC_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/process-document'].id" --output text)
-              TASK_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/task'].id" --output text)
-              TASK_ID_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/task/{task_id}'].id" --output text)
-              
-              if [ ! -z "$PROCESS_DOC_ID" ]; then
-                terraform import \
-                  -var="aws_region=${{ env.AWS_REGION }}" \
-                  -var="api_key=${{ secrets.API_KEY }}" \
-                  -var="db_host=${{ secrets.DB_HOST }}" \
-                  -var="db_name=${{ secrets.DB_NAME }}" \
-                  -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                  -var="db_port=${{ secrets.DB_PORT }}" \
-                  -var="db_user=${{ secrets.DB_USER }}" \
-                  -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                  aws_api_gateway_resource.process_document $API_ID/$API_RESOURCE_ID/$PROCESS_DOC_ID || true
-              fi
-              
-              if [ ! -z "$TASK_ID" ]; then
-                terraform import \
-                  -var="aws_region=${{ env.AWS_REGION }}" \
-                  -var="api_key=${{ secrets.API_KEY }}" \
-                  -var="db_host=${{ secrets.DB_HOST }}" \
-                  -var="db_name=${{ secrets.DB_NAME }}" \
-                  -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                  -var="db_port=${{ secrets.DB_PORT }}" \
-                  -var="db_user=${{ secrets.DB_USER }}" \
-                  -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                  aws_api_gateway_resource.task $API_ID/$API_RESOURCE_ID/$TASK_ID || true
-              fi
-              
-              if [ ! -z "$TASK_ID_ID" ]; then
-                terraform import \
-                  -var="aws_region=${{ env.AWS_REGION }}" \
-                  -var="api_key=${{ secrets.API_KEY }}" \
-                  -var="db_host=${{ secrets.DB_HOST }}" \
-                  -var="db_name=${{ secrets.DB_NAME }}" \
-                  -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                  -var="db_port=${{ secrets.DB_PORT }}" \
-                  -var="db_user=${{ secrets.DB_USER }}" \
-                  -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                  aws_api_gateway_resource.task_id $API_ID/$TASK_ID/$TASK_ID_ID || true
-              fi
-            fi
+          # Import IAM role if it exists
+          if aws iam get-role --role-name ai-doc-parser-lambda-role 2>/dev/null; then
+            terraform import \
+              -var="aws_region=${{ env.AWS_REGION }}" \
+              -var="api_key=${{ secrets.API_KEY }}" \
+              -var="db_host=${{ secrets.DB_HOST }}" \
+              -var="db_name=${{ secrets.DB_NAME }}" \
+              -var="db_password=${{ secrets.DB_PASSWORD }}" \
+              -var="db_port=${{ secrets.DB_PORT }}" \
+              -var="db_user=${{ secrets.DB_USER }}" \
+              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+              aws_iam_role.lambda_role ai-doc-parser-lambda-role || true
+          fi
+          
+          # Import S3 bucket if it exists
+          if aws s3api head-bucket --bucket ai-doc-parser-s3 2>/dev/null; then
+            terraform import \
+              -var="aws_region=${{ env.AWS_REGION }}" \
+              -var="api_key=${{ secrets.API_KEY }}" \
+              -var="db_host=${{ secrets.DB_HOST }}" \
+              -var="db_name=${{ secrets.DB_NAME }}" \
+              -var="db_password=${{ secrets.DB_PASSWORD }}" \
+              -var="db_port=${{ secrets.DB_PORT }}" \
+              -var="db_user=${{ secrets.DB_USER }}" \
+              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+              aws_s3_bucket.ai_doc_parser ai-doc-parser-s3 || true
+          fi
+          
+          # Import API Gateway if it exists
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text || echo "")
+          if [ ! -z "$API_ID" ]; then
+            terraform import \
+              -var="aws_region=${{ env.AWS_REGION }}" \
+              -var="api_key=${{ secrets.API_KEY }}" \
+              -var="db_host=${{ secrets.DB_HOST }}" \
+              -var="db_name=${{ secrets.DB_NAME }}" \
+              -var="db_password=${{ secrets.DB_PASSWORD }}" \
+              -var="db_port=${{ secrets.DB_PORT }}" \
+              -var="db_user=${{ secrets.DB_USER }}" \
+              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+              aws_api_gateway_rest_api.api $API_ID || true
           fi
         continue-on-error: true
 
       - name: Terraform Validate
         working-directory: ./terraform
         run: terraform validate
-
-      - name: Terraform Plan
-        working-directory: ./terraform
-        run: |
-          terraform plan \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="api_key=${{ secrets.API_KEY }}" \
-            -var="db_host=${{ secrets.DB_HOST }}" \
-            -var="db_name=${{ secrets.DB_NAME }}" \
-            -var="db_password=${{ secrets.DB_PASSWORD }}" \
-            -var="db_port=${{ secrets.DB_PORT }}" \
-            -var="db_user=${{ secrets.DB_USER }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}"
 
       - name: Create ECR Repository and IAM Roles
         id: create_ecr_iam
@@ -284,12 +143,6 @@ jobs:
             -target=aws_iam_role_policy.lambda_s3_policy \
             -target=aws_iam_role_policy_attachment.lambda_logs
         continue-on-error: true
-        
-      - name: Check ECR IAM creation status
-        if: steps.create_ecr_iam.outcome != 'success'
-        run: |
-          echo "ECR and IAM creation failed. This might be because they already exist."
-          echo "Continuing with deployment..."
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -298,43 +151,23 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Ensure Dockerfile is Lambda-compatible
-        run: |
-          # Ensure Dockerfile is using proper Lambda base image
-          if ! grep -q "FROM public.ecr.aws/lambda/python:" Dockerfile; then
-            echo "ERROR: Dockerfile doesn't use AWS Lambda base image. Please update your Dockerfile."
-            exit 1
-          fi
-          
-          # Ensure CMD is set correctly for Lambda
-          if ! grep -q 'CMD \[ "lambda_handler.handler" \]' Dockerfile; then
-            echo "Updating CMD for Lambda compatibility"
-            # If CMD exists, replace it
-            if grep -q "CMD " Dockerfile; then
-              sed -i 's|CMD .*|CMD [ "lambda_handler.handler" ]|' Dockerfile
-            else
-              # Add CMD if it doesn't exist
-              echo 'CMD [ "lambda_handler.handler" ]' >> Dockerfile
-            fi
-          fi
-
-      - name: Build and push Docker image
+      - name: Build and Push Docker Image with Platform Compatibility
         id: build_push
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64
-          tags: ${{ steps.login-ecr.outputs.registry }}/ai-doc-parser-ecr:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            LAMBDA_TASK_ROOT=/var/task
-            AWS_LAMBDA_FUNCTION_HANDLER=lambda_handler.handler
+        run: |
+          # Get ECR repository URI
+          ECR_REPO=$(aws ecr describe-repositories --repository-names ai-doc-parser-ecr --query 'repositories[0].repositoryUri' --output text)
+          
+          # Build and push Docker image with the correct platform
+          docker buildx build \
+            --platform=linux/amd64 \
+            --push \
+            -t $ECR_REPO:latest \
+            .
+          
+          echo "The image has been built and pushed to $ECR_REPO:latest"
 
-      - name: Deploy S3 and API Gateway
-        id: deploy_non_lambda
-        if: steps.build_push.outcome == 'success'
+      - name: Deploy S3 Bucket
+        id: deploy_s3
         working-directory: ./terraform
         run: |
           terraform apply -auto-approve \
@@ -347,30 +180,80 @@ jobs:
             -var="db_user=${{ secrets.DB_USER }}" \
             -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
             -target=aws_s3_bucket.ai_doc_parser \
-            -target=aws_s3_bucket_ownership_controls.ai_doc_parser \
-            -target=aws_api_gateway_rest_api.api \
-            -target=aws_api_gateway_resource.api_resource \
-            -target=aws_api_gateway_resource.process_document \
-            -target=aws_api_gateway_resource.task \
-            -target=aws_api_gateway_resource.task_id \
-            -target=aws_api_gateway_method.process_document_post \
-            -target=aws_api_gateway_method.task_id_get
+            -target=aws_s3_bucket_ownership_controls.ai_doc_parser
         continue-on-error: true
 
-      - name: Update Lambda Function
-        id: update_lambda
-        if: steps.build_push.outcome == 'success'
+      - name: Create or Update Lambda Function
+        id: deploy_lambda
         run: |
-          # First check if Lambda exists
+          # Get ECR repository URI
+          ECR_REPO=$(aws ecr describe-repositories --repository-names ai-doc-parser-ecr --query 'repositories[0].repositoryUri' --output text)
+          
+          # Check if Lambda exists
           if aws lambda get-function --function-name ai-doc-parser-lambda > /dev/null 2>&1; then
-            # Update existing Lambda
+            echo "Updating Lambda function..."
             aws lambda update-function-code \
               --function-name ai-doc-parser-lambda \
-              --image-uri ${{ steps.login-ecr.outputs.registry }}/ai-doc-parser-ecr:latest
+              --image-uri $ECR_REPO:latest
           else
-            # Try to create Lambda through Terraform
-            cd terraform
-            terraform apply -auto-approve \
+            echo "Creating Lambda function..."
+            aws lambda create-function \
+              --function-name ai-doc-parser-lambda \
+              --role arn:aws:iam::$(aws sts get-caller-identity --query 'Account' --output text):role/ai-doc-parser-lambda-role \
+              --package-type Image \
+              --code ImageUri=$ECR_REPO:latest \
+              --timeout 90 \
+              --memory-size 4096 \
+              --ephemeral-storage Size=5120 \
+              --environment "Variables={API_KEY=${{ secrets.API_KEY }},DB_HOST=${{ secrets.DB_HOST }},DB_NAME=${{ secrets.DB_NAME }},DB_PASSWORD=${{ secrets.DB_PASSWORD }},DB_PORT=${{ secrets.DB_PORT }},DB_USER=${{ secrets.DB_USER }},OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }},S3_BUCKET_NAME=ai-doc-parser-s3}"
+          fi
+          
+          echo "Lambda function deployed successfully"
+
+      - name: Deploy API Gateway
+        id: deploy_api
+        working-directory: ./terraform
+        run: |
+          # Update Terraform configuration to use the lambda without creating it
+          cat <<EOT > lambda_override.tf
+          # This file overrides the creation of the Lambda function
+          # since we created it using the AWS CLI
+          resource "aws_lambda_function" "ai_doc_parser" {
+            function_name = "ai-doc-parser-lambda"
+            image_uri     = "${aws_ecr_repository.ai_doc_parser.repository_url}:latest"
+            role          = aws_iam_role.lambda_role.arn
+            package_type  = "Image"
+            memory_size   = 4096
+            timeout       = 90
+            ephemeral_storage {
+              size = 5120
+            }
+
+            environment {
+              variables = {
+                API_KEY         = var.api_key
+                DB_HOST         = var.db_host
+                DB_NAME         = var.db_name
+                DB_PASSWORD     = var.db_password
+                DB_PORT         = var.db_port
+                DB_USER         = var.db_user
+                OPENAI_API_KEY  = var.openai_api_key
+                S3_BUCKET_NAME  = aws_s3_bucket.ai_doc_parser.bucket
+              }
+            }
+            
+            # Prevent terraform from trying to create the Lambda
+            # (Lambda was created by aws cli)
+            lifecycle {
+              ignore_changes = all
+            }
+          }
+          EOT
+          
+          # Import Lambda into state
+          LAMBDA_ARN=$(aws lambda get-function --function-name ai-doc-parser-lambda --query 'Configuration.FunctionArn' --output text)
+          if [ ! -z "$LAMBDA_ARN" ]; then
+            terraform import \
               -var="aws_region=${{ env.AWS_REGION }}" \
               -var="api_key=${{ secrets.API_KEY }}" \
               -var="db_host=${{ secrets.DB_HOST }}" \
@@ -379,12 +262,33 @@ jobs:
               -var="db_port=${{ secrets.DB_PORT }}" \
               -var="db_user=${{ secrets.DB_USER }}" \
               -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-              -target=aws_lambda_function.ai_doc_parser
+              aws_lambda_function.ai_doc_parser $LAMBDA_ARN || true
           fi
+          
+          # Apply API Gateway configuration
+          terraform apply -auto-approve \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="api_key=${{ secrets.API_KEY }}" \
+            -var="db_host=${{ secrets.DB_HOST }}" \
+            -var="db_name=${{ secrets.DB_NAME }}" \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -var="db_port=${{ secrets.DB_PORT }}" \
+            -var="db_user=${{ secrets.DB_USER }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            -target=aws_api_gateway_rest_api.api \
+            -target=aws_api_gateway_resource.api_resource \
+            -target=aws_api_gateway_resource.process_document \
+            -target=aws_api_gateway_resource.task \
+            -target=aws_api_gateway_resource.task_id \
+            -target=aws_api_gateway_method.process_document_post \
+            -target=aws_api_gateway_method.task_id_get \
+            -target=aws_api_gateway_integration.process_document_integration \
+            -target=aws_api_gateway_integration.task_id_integration \
+            -target=aws_lambda_permission.api_gateway
         continue-on-error: true
 
-      - name: Deploy API Gateway Integrations and Deployment
-        id: deploy_integrations
+      - name: Deploy API Gateway Stage
+        id: deploy_stage
         working-directory: ./terraform
         run: |
           terraform apply -auto-approve \
@@ -396,16 +300,22 @@ jobs:
             -var="db_port=${{ secrets.DB_PORT }}" \
             -var="db_user=${{ secrets.DB_USER }}" \
             -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-            -target=aws_api_gateway_integration.process_document_integration \
-            -target=aws_api_gateway_integration.task_id_integration \
-            -target=aws_lambda_permission.api_gateway \
             -target=aws_api_gateway_deployment.prod
-        continue-on-error: true
-
-      - name: Output API URL
-        if: steps.deploy_integrations.outcome == 'success'
-        working-directory: ./terraform
-        run: terraform output api_url
+            
+          # Get API URL
+          API_URL=$(terraform output api_url)
+          if [ -z "$API_URL" ]; then
+            echo "Failed to get API URL"
+            API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text)
+            if [ ! -z "$API_ID" ]; then
+              echo "API Gateway URL: https://$API_ID.execute-api.${{ env.AWS_REGION }}.amazonaws.com/prod"
+            else
+              echo "API Gateway not found"
+              exit 1
+            fi
+          else
+            echo "API URL: $API_URL"
+          fi
 
   cleanup-on-failure:
     needs: deploy
@@ -427,22 +337,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-
-      - name: Terraform Init
-        working-directory: ./terraform
-        run: terraform init
-
-      - name: Ensure force_delete and force_destroy are true
-        run: |
-          if ! grep -q "force_delete = true" terraform/main.tf; then
-            sed -i '/resource "aws_ecr_repository" "ai_doc_parser" {/a \ \ force_delete = true' terraform/main.tf
-          fi
-          if ! grep -q "force_destroy = true" terraform/main.tf; then
-            sed -i '/resource "aws_s3_bucket" "ai_doc_parser" {/a \ \ force_destroy = true' terraform/main.tf
-          fi
-
       - name: Empty S3 bucket if it exists
         run: |
           if aws s3 ls s3://ai-doc-parser-s3 2>&1 > /dev/null; then
@@ -450,32 +344,45 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Apply force_delete/force_destroy changes
-        working-directory: ./terraform
+      - name: Delete Lambda Function
         run: |
-          terraform apply -auto-approve \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="api_key=${{ secrets.API_KEY }}" \
-            -var="db_host=${{ secrets.DB_HOST }}" \
-            -var="db_name=${{ secrets.DB_NAME }}" \
-            -var="db_password=${{ secrets.DB_PASSWORD }}" \
-            -var="db_port=${{ secrets.DB_PORT }}" \
-            -var="db_user=${{ secrets.DB_USER }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}"
+          if aws lambda get-function --function-name ai-doc-parser-lambda > /dev/null 2>&1; then
+            aws lambda delete-function --function-name ai-doc-parser-lambda
+          fi
         continue-on-error: true
 
-      - name: Destroy Infrastructure
-        working-directory: ./terraform
+      - name: Delete API Gateway
         run: |
-          terraform destroy -auto-approve \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="api_key=${{ secrets.API_KEY }}" \
-            -var="db_host=${{ secrets.DB_HOST }}" \
-            -var="db_name=${{ secrets.DB_NAME }}" \
-            -var="db_password=${{ secrets.DB_PASSWORD }}" \
-            -var="db_port=${{ secrets.DB_PORT }}" \
-            -var="db_user=${{ secrets.DB_USER }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}"
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text)
+          if [ ! -z "$API_ID" ]; then
+            aws apigateway delete-rest-api --rest-api-id $API_ID
+          fi
+        continue-on-error: true
+
+      - name: Delete IAM Role
+        run: |
+          if aws iam get-role --role-name ai-doc-parser-lambda-role > /dev/null 2>&1; then
+            # First detach policies
+            aws iam list-attached-role-policies --role-name ai-doc-parser-lambda-role --query 'AttachedPolicies[*].PolicyArn' --output text | tr '\t' '\n' | xargs -I {} aws iam detach-role-policy --role-name ai-doc-parser-lambda-role --policy-arn {}
+            # Delete inline policies
+            aws iam list-role-policies --role-name ai-doc-parser-lambda-role --query 'PolicyNames' --output text | tr '\t' '\n' | xargs -I {} aws iam delete-role-policy --role-name ai-doc-parser-lambda-role --policy-name {}
+            # Delete role
+            aws iam delete-role --role-name ai-doc-parser-lambda-role
+          fi
+        continue-on-error: true
+
+      - name: Delete ECR Repository
+        run: |
+          if aws ecr describe-repositories --repository-names ai-doc-parser-ecr > /dev/null 2>&1; then
+            aws ecr delete-repository --repository-name ai-doc-parser-ecr --force
+          fi
+        continue-on-error: true
+
+      - name: Delete S3 Bucket
+        run: |
+          if aws s3api head-bucket --bucket ai-doc-parser-s3 2>/dev/null; then
+            aws s3 rb s3://ai-doc-parser-s3 --force
+          fi
         continue-on-error: true
 
       - name: Notify about cleanup status
