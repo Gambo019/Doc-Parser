@@ -57,6 +57,7 @@ jobs:
           terraform state rm aws_api_gateway_resource.task || true
           terraform state rm aws_api_gateway_resource.task_id || true
           terraform state rm aws_lambda_function.ai_doc_parser || true
+          terraform state rm aws_api_gateway_rest_api.api || true
         continue-on-error: true
 
       # Basic resource imports
@@ -118,6 +119,69 @@ jobs:
               -var="db_user=${{ secrets.DB_USER }}" \
               -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
               aws_api_gateway_rest_api.api $API_ID || true
+              
+            # Import API Gateway resources if they exist
+            ROOT_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/'].id" --output text)
+            
+            # Import /api resource
+            API_RESOURCE_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api'].id" --output text)
+            if [ ! -z "$API_RESOURCE_ID" ]; then
+              terraform import \
+                -var="aws_region=${{ env.AWS_REGION }}" \
+                -var="api_key=${{ secrets.API_KEY }}" \
+                -var="db_host=${{ secrets.DB_HOST }}" \
+                -var="db_name=${{ secrets.DB_NAME }}" \
+                -var="db_password=${{ secrets.DB_PASSWORD }}" \
+                -var="db_port=${{ secrets.DB_PORT }}" \
+                -var="db_user=${{ secrets.DB_USER }}" \
+                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+                aws_api_gateway_resource.api_resource $API_ID/$API_RESOURCE_ID || true
+            fi
+            
+            # Import /api/process-document resource
+            PROCESS_DOC_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/process-document'].id" --output text)
+            if [ ! -z "$PROCESS_DOC_ID" ]; then
+              terraform import \
+                -var="aws_region=${{ env.AWS_REGION }}" \
+                -var="api_key=${{ secrets.API_KEY }}" \
+                -var="db_host=${{ secrets.DB_HOST }}" \
+                -var="db_name=${{ secrets.DB_NAME }}" \
+                -var="db_password=${{ secrets.DB_PASSWORD }}" \
+                -var="db_port=${{ secrets.DB_PORT }}" \
+                -var="db_user=${{ secrets.DB_USER }}" \
+                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+                aws_api_gateway_resource.process_document $API_ID/$PROCESS_DOC_ID || true
+            fi
+            
+            # Import /api/task resource
+            TASK_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/task'].id" --output text)
+            if [ ! -z "$TASK_ID" ]; then
+              terraform import \
+                -var="aws_region=${{ env.AWS_REGION }}" \
+                -var="api_key=${{ secrets.API_KEY }}" \
+                -var="db_host=${{ secrets.DB_HOST }}" \
+                -var="db_name=${{ secrets.DB_NAME }}" \
+                -var="db_password=${{ secrets.DB_PASSWORD }}" \
+                -var="db_port=${{ secrets.DB_PORT }}" \
+                -var="db_user=${{ secrets.DB_USER }}" \
+                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+                aws_api_gateway_resource.task $API_ID/$TASK_ID || true
+            fi
+            
+            # Import /api/task/{task_id} resource
+            TASK_ID_PATH=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/task/{task_id}'].id" --output text)
+            if [ ! -z "$TASK_ID_PATH" ]; then
+              terraform import \
+                -var="aws_region=${{ env.AWS_REGION }}" \
+                -var="api_key=${{ secrets.API_KEY }}" \
+                -var="db_host=${{ secrets.DB_HOST }}" \
+                -var="db_name=${{ secrets.DB_NAME }}" \
+                -var="db_password=${{ secrets.DB_PASSWORD }}" \
+                -var="db_port=${{ secrets.DB_PORT }}" \
+                -var="db_user=${{ secrets.DB_USER }}" \
+                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+                aws_api_gateway_resource.task_id $API_ID/$TASK_ID_PATH || true
+            fi
           fi
         continue-on-error: true
 
@@ -281,18 +345,37 @@ jobs:
               aws_lambda_function.ai_doc_parser $LAMBDA_ARN || true
           fi
           
-          # Check if API Gateway resources exist and skip if they do
+          # Check if API Gateway exists and create/update appropriately
           API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text || echo "")
           
           if [ ! -z "$API_ID" ]; then
             # Get existing resources
             RESOURCES=$(aws apigateway get-resources --rest-api-id $API_ID)
-            API_PATH_EXISTS=$(echo "$RESOURCES" | grep -c "/api" || true)
             
-            if [ "$API_PATH_EXISTS" -gt 0 ]; then
-              echo "API resources already exist, skipping resource creation"
+            # Check if necessary paths exist
+            API_RESOURCE_ID=$(echo "$RESOURCES" | grep -o '"path": "/api"' | wc -l || echo "0")
+            PROCESS_DOC_RESOURCE=$(echo "$RESOURCES" | grep -o '"path": "/api/process-document"' | wc -l || echo "0")
+            TASK_RESOURCE=$(echo "$RESOURCES" | grep -o '"path": "/api/task"' | wc -l || echo "0")
+            TASK_ID_RESOURCE=$(echo "$RESOURCES" | grep -o '"path": "/api/task/{task_id}"' | wc -l || echo "0")
+            
+            # Only apply what's needed
+            if [ "$API_RESOURCE_ID" -gt 0 ] && [ "$PROCESS_DOC_RESOURCE" -gt 0 ] && [ "$TASK_RESOURCE" -gt 0 ] && [ "$TASK_ID_RESOURCE" -gt 0 ]; then
+              echo "All API resources already exist, applying only integrations and methods"
               
-              # Apply only lambda permissions and integration
+              # Add binary media types if not already present
+              BINARY_TYPES=$(aws apigateway get-rest-api --rest-api-id $API_ID --query 'binaryMediaTypes' --output text)
+              if ! echo "$BINARY_TYPES" | grep -q "multipart/form-data"; then
+                aws apigateway update-rest-api \
+                  --rest-api-id $API_ID \
+                  --patch-operations '[{"op":"add","path":"/binaryMediaTypes/multipart~1form-data","value":""}]'
+              fi
+              if ! echo "$BINARY_TYPES" | grep -q "*/*"; then
+                aws apigateway update-rest-api \
+                  --rest-api-id $API_ID \
+                  --patch-operations '[{"op":"add","path":"/binaryMediaTypes/*~1*","value":""}]'
+              fi
+              
+              # Apply only the methods and integrations
               terraform apply -auto-approve \
                 -var="aws_region=${{ env.AWS_REGION }}" \
                 -var="api_key=${{ secrets.API_KEY }}" \
@@ -302,31 +385,51 @@ jobs:
                 -var="db_port=${{ secrets.DB_PORT }}" \
                 -var="db_user=${{ secrets.DB_USER }}" \
                 -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                -target=aws_lambda_permission.api_gateway
-            else
-              # Apply all API Gateway resources
-              terraform apply -auto-approve \
-                -var="aws_region=${{ env.AWS_REGION }}" \
-                -var="api_key=${{ secrets.API_KEY }}" \
-                -var="db_host=${{ secrets.DB_HOST }}" \
-                -var="db_name=${{ secrets.DB_NAME }}" \
-                -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                -var="db_port=${{ secrets.DB_PORT }}" \
-                -var="db_user=${{ secrets.DB_USER }}" \
-                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                -target=aws_api_gateway_rest_api.api \
-                -target=aws_api_gateway_resource.api_resource \
-                -target=aws_api_gateway_resource.process_document \
-                -target=aws_api_gateway_resource.task \
-                -target=aws_api_gateway_resource.task_id \
                 -target=aws_api_gateway_method.process_document_post \
                 -target=aws_api_gateway_method.task_id_get \
                 -target=aws_api_gateway_integration.process_document_integration \
                 -target=aws_api_gateway_integration.task_id_integration \
                 -target=aws_lambda_permission.api_gateway
+            else
+              # Create any missing resources
+              TARGETS=""
+              if [ "$API_RESOURCE_ID" -eq 0 ]; then
+                TARGETS="$TARGETS -target=aws_api_gateway_resource.api_resource"
+              fi
+              if [ "$PROCESS_DOC_RESOURCE" -eq 0 ]; then
+                TARGETS="$TARGETS -target=aws_api_gateway_resource.process_document"
+              fi
+              if [ "$TASK_RESOURCE" -eq 0 ]; then
+                TARGETS="$TARGETS -target=aws_api_gateway_resource.task"
+              fi
+              if [ "$TASK_ID_RESOURCE" -eq 0 ]; then
+                TARGETS="$TARGETS -target=aws_api_gateway_resource.task_id"
+              fi
+              
+              # Apply the API Gateway
+              terraform apply -auto-approve \
+                -var="aws_region=${{ env.AWS_REGION }}" \
+                -var="api_key=${{ secrets.API_KEY }}" \
+                -var="db_host=${{ secrets.DB_HOST }}" \
+                -var="db_name=${{ secrets.DB_NAME }}" \
+                -var="db_password=${{ secrets.DB_PASSWORD }}" \
+                -var="db_port=${{ secrets.DB_PORT }}" \
+                -var="db_user=${{ secrets.DB_USER }}" \
+                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+                $TARGETS \
+                -target=aws_api_gateway_method.process_document_post \
+                -target=aws_api_gateway_method.task_id_get \
+                -target=aws_api_gateway_integration.process_document_integration \
+                -target=aws_api_gateway_integration.task_id_integration \
+                -target=aws_lambda_permission.api_gateway
+              
+              # Add binary media types
+              aws apigateway update-rest-api \
+                --rest-api-id $API_ID \
+                --patch-operations '[{"op":"add","path":"/binaryMediaTypes/multipart~1form-data","value":""},{"op":"add","path":"/binaryMediaTypes/*~1*","value":""}]'
             fi
           else
-            # Create all resources
+            # Create the API Gateway from scratch
             terraform apply -auto-approve \
               -var="aws_region=${{ env.AWS_REGION }}" \
               -var="api_key=${{ secrets.API_KEY }}" \
@@ -346,6 +449,16 @@ jobs:
               -target=aws_api_gateway_integration.process_document_integration \
               -target=aws_api_gateway_integration.task_id_integration \
               -target=aws_lambda_permission.api_gateway
+              
+            # Get the API ID
+            API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text)
+            
+            # Add binary media types
+            if [ ! -z "$API_ID" ]; then
+              aws apigateway update-rest-api \
+                --rest-api-id $API_ID \
+                --patch-operations '[{"op":"add","path":"/binaryMediaTypes/multipart~1form-data","value":""},{"op":"add","path":"/binaryMediaTypes/*~1*","value":""}]'
+            fi
           fi
         continue-on-error: true
 
@@ -376,74 +489,3 @@ jobs:
             echo "API Gateway not found"
             exit 1
           fi
-
-  cleanup-on-failure:
-    needs: deploy
-    if: ${{ needs.deploy.outputs.deployment_status == 'failure' || needs.deploy.result == 'failure' }}
-    runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment || 'production' }}
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-        
-      - name: Set AWS Region
-        run: echo "AWS_REGION=${{ github.event.inputs.aws_region || secrets.AWS_REGION || 'us-east-1' }}" >> $GITHUB_ENV
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Empty S3 bucket if it exists
-        run: |
-          if aws s3 ls s3://ai-doc-parser-s3 2>&1 > /dev/null; then
-            aws s3 rm s3://ai-doc-parser-s3 --recursive
-          fi
-        continue-on-error: true
-
-      - name: Delete Lambda Function
-        run: |
-          if aws lambda get-function --function-name ai-doc-parser-lambda > /dev/null 2>&1; then
-            aws lambda delete-function --function-name ai-doc-parser-lambda
-          fi
-        continue-on-error: true
-
-      - name: Delete API Gateway
-        run: |
-          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text)
-          if [ ! -z "$API_ID" ]; then
-            aws apigateway delete-rest-api --rest-api-id $API_ID
-          fi
-        continue-on-error: true
-
-      - name: Delete IAM Role
-        run: |
-          if aws iam get-role --role-name ai-doc-parser-lambda-role > /dev/null 2>&1; then
-            # First detach policies
-            aws iam list-attached-role-policies --role-name ai-doc-parser-lambda-role --query 'AttachedPolicies[*].PolicyArn' --output text | tr '\t' '\n' | xargs -I {} aws iam detach-role-policy --role-name ai-doc-parser-lambda-role --policy-arn {}
-            # Delete inline policies
-            aws iam list-role-policies --role-name ai-doc-parser-lambda-role --query 'PolicyNames' --output text | tr '\t' '\n' | xargs -I {} aws iam delete-role-policy --role-name ai-doc-parser-lambda-role --policy-name {}
-            # Delete role
-            aws iam delete-role --role-name ai-doc-parser-lambda-role
-          fi
-        continue-on-error: true
-
-      - name: Delete ECR Repository
-        run: |
-          if aws ecr describe-repositories --repository-names ai-doc-parser-ecr > /dev/null 2>&1; then
-            aws ecr delete-repository --repository-name ai-doc-parser-ecr --force
-          fi
-        continue-on-error: true
-
-      - name: Delete S3 Bucket
-        run: |
-          if aws s3api head-bucket --bucket ai-doc-parser-s3 2>/dev/null; then
-            aws s3 rb s3://ai-doc-parser-s3 --force
-          fi
-        continue-on-error: true
-
-      - name: Notify about cleanup status
-        run: echo "Cleanup process completed. Please check AWS console to confirm all resources are removed."
