@@ -144,25 +144,35 @@ jobs:
             -target=aws_iam_role_policy_attachment.lambda_logs
         continue-on-error: true
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
-
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+        
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Build and Push Docker Image with Platform Compatibility
+      - name: Build and Push Docker Image for Lambda
         id: build_push
         run: |
           # Get ECR repository URI
           ECR_REPO=$(aws ecr describe-repositories --repository-names ai-doc-parser-ecr --query 'repositories[0].repositoryUri' --output text)
           
-          # Build and push Docker image with the correct platform
-          docker buildx build \
-            --platform=linux/amd64 \
-            --push \
-            -t $ECR_REPO:latest \
-            .
+          # Login to ECR
+          aws ecr get-login-password | docker login --username AWS --password-stdin $ECR_REPO
+          
+          # Verify Dockerfile is using AWS Lambda base image
+          if ! grep -q "FROM public.ecr.aws/lambda/python:" Dockerfile; then
+            echo "ERROR: Dockerfile must use the AWS Lambda base image (public.ecr.aws/lambda/python)"
+            cat Dockerfile
+            exit 1
+          fi
+          
+          # Build image specifically for Lambda (no buildx)
+          echo "Building image for Lambda..."
+          docker build -t $ECR_REPO:latest .
+          
+          # Push the image
+          echo "Pushing image to ECR..."
+          docker push $ECR_REPO:latest
           
           echo "The image has been built and pushed to $ECR_REPO:latest"
 
@@ -197,6 +207,7 @@ jobs:
               --image-uri $ECR_REPO:latest
           else
             echo "Creating Lambda function..."
+            # Create Lambda with more parameters
             aws lambda create-function \
               --function-name ai-doc-parser-lambda \
               --role arn:aws:iam::$(aws sts get-caller-identity --query 'Account' --output text):role/ai-doc-parser-lambda-role \
@@ -204,9 +215,14 @@ jobs:
               --code ImageUri=$ECR_REPO:latest \
               --timeout 90 \
               --memory-size 4096 \
+              --architectures x86_64 \
               --ephemeral-storage Size=5120 \
               --environment "Variables={API_KEY=${{ secrets.API_KEY }},DB_HOST=${{ secrets.DB_HOST }},DB_NAME=${{ secrets.DB_NAME }},DB_PASSWORD=${{ secrets.DB_PASSWORD }},DB_PORT=${{ secrets.DB_PORT }},DB_USER=${{ secrets.DB_USER }},OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }},S3_BUCKET_NAME=ai-doc-parser-s3}"
           fi
+          
+          # Wait for Lambda to be ready
+          echo "Waiting for Lambda to be ready..."
+          aws lambda wait function-active-v2 --function-name ai-doc-parser-lambda
           
           echo "Lambda function deployed successfully"
 
