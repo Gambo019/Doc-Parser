@@ -48,6 +48,38 @@ jobs:
         working-directory: ./terraform
         run: terraform init
 
+      - name: Check if resources already exist
+        id: check_resources
+        run: |
+          # Check if IAM role exists
+          if aws iam get-role --role-name ai-doc-parser-lambda-role 2>/dev/null; then
+            echo "IAM_ROLE_EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "IAM_ROLE_EXISTS=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check if ECR repo exists
+          if aws ecr describe-repositories --repository-names ai-doc-parser-ecr 2>/dev/null; then
+            echo "ECR_REPO_EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "ECR_REPO_EXISTS=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+
+      - name: Import existing IAM role into Terraform state
+        if: steps.check_resources.outputs.IAM_ROLE_EXISTS == 'true'
+        working-directory: ./terraform
+        run: |
+          terraform import aws_iam_role.lambda_role ai-doc-parser-lambda-role
+        continue-on-error: true
+
+      - name: Import existing ECR repository into Terraform state
+        if: steps.check_resources.outputs.ECR_REPO_EXISTS == 'true'
+        working-directory: ./terraform
+        run: |
+          terraform import aws_ecr_repository.ai_doc_parser ai-doc-parser-ecr
+        continue-on-error: true
+
       - name: Terraform Validate
         working-directory: ./terraform
         run: terraform validate
