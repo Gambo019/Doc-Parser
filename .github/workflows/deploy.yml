@@ -231,7 +231,7 @@ jobs:
         working-directory: ./terraform
         run: |
           # Update Terraform configuration to use the lambda without creating it
-          cat <<EOT > lambda_override.tf
+          cat > lambda_override.tf << 'EOT'
           # This file overrides the creation of the Lambda function
           # since we created it using the AWS CLI
           resource "aws_lambda_function" "ai_doc_parser" {
@@ -281,32 +281,79 @@ jobs:
               aws_lambda_function.ai_doc_parser $LAMBDA_ARN || true
           fi
           
-          # Apply API Gateway configuration
-          terraform apply -auto-approve \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="api_key=${{ secrets.API_KEY }}" \
-            -var="db_host=${{ secrets.DB_HOST }}" \
-            -var="db_name=${{ secrets.DB_NAME }}" \
-            -var="db_password=${{ secrets.DB_PASSWORD }}" \
-            -var="db_port=${{ secrets.DB_PORT }}" \
-            -var="db_user=${{ secrets.DB_USER }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-            -target=aws_api_gateway_rest_api.api \
-            -target=aws_api_gateway_resource.api_resource \
-            -target=aws_api_gateway_resource.process_document \
-            -target=aws_api_gateway_resource.task \
-            -target=aws_api_gateway_resource.task_id \
-            -target=aws_api_gateway_method.process_document_post \
-            -target=aws_api_gateway_method.task_id_get \
-            -target=aws_api_gateway_integration.process_document_integration \
-            -target=aws_api_gateway_integration.task_id_integration \
-            -target=aws_lambda_permission.api_gateway
+          # Check if API Gateway resources exist and skip if they do
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text || echo "")
+          
+          if [ ! -z "$API_ID" ]; then
+            # Get existing resources
+            RESOURCES=$(aws apigateway get-resources --rest-api-id $API_ID)
+            API_PATH_EXISTS=$(echo "$RESOURCES" | grep -c "/api" || true)
+            
+            if [ "$API_PATH_EXISTS" -gt 0 ]; then
+              echo "API resources already exist, skipping resource creation"
+              
+              # Apply only lambda permissions and integration
+              terraform apply -auto-approve \
+                -var="aws_region=${{ env.AWS_REGION }}" \
+                -var="api_key=${{ secrets.API_KEY }}" \
+                -var="db_host=${{ secrets.DB_HOST }}" \
+                -var="db_name=${{ secrets.DB_NAME }}" \
+                -var="db_password=${{ secrets.DB_PASSWORD }}" \
+                -var="db_port=${{ secrets.DB_PORT }}" \
+                -var="db_user=${{ secrets.DB_USER }}" \
+                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+                -target=aws_lambda_permission.api_gateway
+            else
+              # Apply all API Gateway resources
+              terraform apply -auto-approve \
+                -var="aws_region=${{ env.AWS_REGION }}" \
+                -var="api_key=${{ secrets.API_KEY }}" \
+                -var="db_host=${{ secrets.DB_HOST }}" \
+                -var="db_name=${{ secrets.DB_NAME }}" \
+                -var="db_password=${{ secrets.DB_PASSWORD }}" \
+                -var="db_port=${{ secrets.DB_PORT }}" \
+                -var="db_user=${{ secrets.DB_USER }}" \
+                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+                -target=aws_api_gateway_rest_api.api \
+                -target=aws_api_gateway_resource.api_resource \
+                -target=aws_api_gateway_resource.process_document \
+                -target=aws_api_gateway_resource.task \
+                -target=aws_api_gateway_resource.task_id \
+                -target=aws_api_gateway_method.process_document_post \
+                -target=aws_api_gateway_method.task_id_get \
+                -target=aws_api_gateway_integration.process_document_integration \
+                -target=aws_api_gateway_integration.task_id_integration \
+                -target=aws_lambda_permission.api_gateway
+            fi
+          else
+            # Create all resources
+            terraform apply -auto-approve \
+              -var="aws_region=${{ env.AWS_REGION }}" \
+              -var="api_key=${{ secrets.API_KEY }}" \
+              -var="db_host=${{ secrets.DB_HOST }}" \
+              -var="db_name=${{ secrets.DB_NAME }}" \
+              -var="db_password=${{ secrets.DB_PASSWORD }}" \
+              -var="db_port=${{ secrets.DB_PORT }}" \
+              -var="db_user=${{ secrets.DB_USER }}" \
+              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+              -target=aws_api_gateway_rest_api.api \
+              -target=aws_api_gateway_resource.api_resource \
+              -target=aws_api_gateway_resource.process_document \
+              -target=aws_api_gateway_resource.task \
+              -target=aws_api_gateway_resource.task_id \
+              -target=aws_api_gateway_method.process_document_post \
+              -target=aws_api_gateway_method.task_id_get \
+              -target=aws_api_gateway_integration.process_document_integration \
+              -target=aws_api_gateway_integration.task_id_integration \
+              -target=aws_lambda_permission.api_gateway
+          fi
         continue-on-error: true
 
       - name: Deploy API Gateway Stage
         id: deploy_stage
         working-directory: ./terraform
         run: |
+          # Create or update the deployment
           terraform apply -auto-approve \
             -var="aws_region=${{ env.AWS_REGION }}" \
             -var="api_key=${{ secrets.API_KEY }}" \
@@ -318,19 +365,16 @@ jobs:
             -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
             -target=aws_api_gateway_deployment.prod
             
-          # Get API URL
-          API_URL=$(terraform output api_url)
-          if [ -z "$API_URL" ]; then
-            echo "Failed to get API URL"
-            API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text)
-            if [ ! -z "$API_ID" ]; then
-              echo "API Gateway URL: https://$API_ID.execute-api.${{ env.AWS_REGION }}.amazonaws.com/prod"
-            else
-              echo "API Gateway not found"
-              exit 1
-            fi
+          # Get API URL directly from AWS CLI since Terraform may have warnings
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text)
+          if [ ! -z "$API_ID" ]; then
+            API_URL="https://$API_ID.execute-api.${{ env.AWS_REGION }}.amazonaws.com/prod"
+            echo "API Gateway URL: $API_URL"
+            # Create a file to store the URL for future reference
+            echo $API_URL > api_url.txt
           else
-            echo "API URL: $API_URL"
+            echo "API Gateway not found"
+            exit 1
           fi
 
   cleanup-on-failure:
