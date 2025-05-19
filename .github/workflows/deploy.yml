@@ -70,14 +70,112 @@ jobs:
         if: steps.check_resources.outputs.IAM_ROLE_EXISTS == 'true'
         working-directory: ./terraform
         run: |
-          terraform import aws_iam_role.lambda_role ai-doc-parser-lambda-role
+          terraform import \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="api_key=${{ secrets.API_KEY }}" \
+            -var="db_host=${{ secrets.DB_HOST }}" \
+            -var="db_name=${{ secrets.DB_NAME }}" \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -var="db_port=${{ secrets.DB_PORT }}" \
+            -var="db_user=${{ secrets.DB_USER }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            aws_iam_role.lambda_role ai-doc-parser-lambda-role
         continue-on-error: true
 
       - name: Import existing ECR repository into Terraform state
         if: steps.check_resources.outputs.ECR_REPO_EXISTS == 'true'
         working-directory: ./terraform
         run: |
-          terraform import aws_ecr_repository.ai_doc_parser ai-doc-parser-ecr
+          terraform import \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="api_key=${{ secrets.API_KEY }}" \
+            -var="db_host=${{ secrets.DB_HOST }}" \
+            -var="db_name=${{ secrets.DB_NAME }}" \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -var="db_port=${{ secrets.DB_PORT }}" \
+            -var="db_user=${{ secrets.DB_USER }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            aws_ecr_repository.ai_doc_parser ai-doc-parser-ecr
+        continue-on-error: true
+
+      - name: Check if S3 bucket exists
+        id: check_s3
+        run: |
+          if aws s3api head-bucket --bucket ai-doc-parser-s3 2>/dev/null; then
+            echo "S3_BUCKET_EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "S3_BUCKET_EXISTS=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+
+      - name: Check if Lambda function exists
+        id: check_lambda
+        run: |
+          if aws lambda get-function --function-name ai-doc-parser-lambda 2>/dev/null; then
+            echo "LAMBDA_EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "LAMBDA_EXISTS=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+
+      - name: Check if API Gateway exists
+        id: check_api
+        run: |
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text)
+          if [ ! -z "$API_ID" ]; then
+            echo "API_EXISTS=true" >> $GITHUB_OUTPUT
+            echo "API_ID=$API_ID" >> $GITHUB_OUTPUT
+          else
+            echo "API_EXISTS=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+
+      - name: Import S3 bucket
+        if: steps.check_s3.outputs.S3_BUCKET_EXISTS == 'true'
+        working-directory: ./terraform
+        run: |
+          terraform import \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="api_key=${{ secrets.API_KEY }}" \
+            -var="db_host=${{ secrets.DB_HOST }}" \
+            -var="db_name=${{ secrets.DB_NAME }}" \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -var="db_port=${{ secrets.DB_PORT }}" \
+            -var="db_user=${{ secrets.DB_USER }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            aws_s3_bucket.ai_doc_parser ai-doc-parser-s3
+        continue-on-error: true
+
+      - name: Import Lambda function
+        if: steps.check_lambda.outputs.LAMBDA_EXISTS == 'true'
+        working-directory: ./terraform
+        run: |
+          terraform import \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="api_key=${{ secrets.API_KEY }}" \
+            -var="db_host=${{ secrets.DB_HOST }}" \
+            -var="db_name=${{ secrets.DB_NAME }}" \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -var="db_port=${{ secrets.DB_PORT }}" \
+            -var="db_user=${{ secrets.DB_USER }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            aws_lambda_function.ai_doc_parser ai-doc-parser-lambda
+        continue-on-error: true
+
+      - name: Import API Gateway
+        if: steps.check_api.outputs.API_EXISTS == 'true'
+        working-directory: ./terraform
+        run: |
+          terraform import \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="api_key=${{ secrets.API_KEY }}" \
+            -var="db_host=${{ secrets.DB_HOST }}" \
+            -var="db_name=${{ secrets.DB_NAME }}" \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -var="db_port=${{ secrets.DB_PORT }}" \
+            -var="db_user=${{ secrets.DB_USER }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            aws_api_gateway_rest_api.api ${{ steps.check_api.outputs.API_ID }}
         continue-on-error: true
 
       - name: Terraform Validate
