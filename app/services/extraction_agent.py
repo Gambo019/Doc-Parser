@@ -1,6 +1,7 @@
 from llama_index.llms.openai import OpenAI
 from app.models.document import DocumentExtraction, DocumentValidation
 from app.core.config import settings
+from app.core.logger import logger
 from typing import Dict, Any
 import json
 
@@ -19,6 +20,7 @@ class ExtractionAgent:
                 
                 # Combine metadata and content for context
                 context = f"Metadata:\n{metadata}\n\nContent:\n{content}"
+                logger.info(f"Context: {context}")
                 
                 # Extract structured information
                 response = structured_llm.complete(context)
@@ -26,6 +28,7 @@ class ExtractionAgent:
                 json_response = json.loads(response.text)
                 return json_response
             except Exception as e:
+                logger.error(f"Error in extraction: {str(e)}")
                 # Convert LLM to structured output
                 structured_llm = self.llm.as_structured_llm(DocumentValidation)
                 

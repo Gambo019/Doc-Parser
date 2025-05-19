@@ -1,0 +1,81 @@
+name: Deploy AI Document Parser
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      aws_region:
+        description: 'AWS Region to deploy to'
+        required: false
+        default: 'us-east-1'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set AWS Region
+        id: set-region
+        run: echo "AWS_REGION=${{ github.event.inputs.aws_region || secrets.AWS_REGION || 'us-east-1' }}" >> $GITHUB_ENV
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Create ECR Repository and IAM Roles
+        working-directory: ./terraform
+        run: |
+          terraform apply -auto-approve \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="api_key=${{ secrets.API_KEY }}" \
+            -var="db_host=${{ secrets.DB_HOST }}" \
+            -var="db_name=${{ secrets.DB_NAME }}" \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -var="db_port=${{ secrets.DB_PORT }}" \
+            -var="db_user=${{ secrets.DB_USER }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            -target=aws_ecr_repository.ai_doc_parser \
+            -target=aws_iam_role.lambda_role \
+            -target=aws_iam_role_policy.lambda_s3_policy \
+            -target=aws_iam_role_policy_attachment.lambda_logs
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/ai-doc-parser-ecr:latest
+
+      - name: Deploy Remaining Infrastructure
+        working-directory: ./terraform
+        run: |
+          terraform apply -auto-approve \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="api_key=${{ secrets.API_KEY }}" \
+            -var="db_host=${{ secrets.DB_HOST }}" \
+            -var="db_name=${{ secrets.DB_NAME }}" \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -var="db_port=${{ secrets.DB_PORT }}" \
+            -var="db_user=${{ secrets.DB_USER }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" 
