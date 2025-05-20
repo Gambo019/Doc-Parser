@@ -1,624 +1,97 @@
-name: Deploy AI Document Parser
+name: Deploy to AWS
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
-    inputs:
-      aws_region:
-        description: 'AWS Region to deploy to'
-        required: false
-        default: 'us-east-1'
-      environment:
-        description: 'Environment to deploy to'
-        required: false
-        default: 'production'
-        type: choice
-        options:
-          - production
-          - staging
-          - development
+
+env:
+  AWS_REGION: us-east-1
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment || 'production' }}
-    outputs:
-      deployment_status: ${{ job.status }}
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set AWS Region
-        id: set-region
-        run: echo "AWS_REGION=${{ github.event.inputs.aws_region || secrets.AWS_REGION || 'us-east-1' }}" >> $GITHUB_ENV
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
+      - name: Setup Terraform with caching
         uses: hashicorp/setup-terraform@v2
-        
+        with:
+          terraform_version: 1.12.0
+          terraform_wrapper: false
+
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
       - name: Terraform Init
         working-directory: ./terraform
         run: terraform init
 
-      # Clear Terraform state to avoid conflicts
-      - name: Clear Terraform state for conflict-prone resources
+      - name: Terraform Format and Validate
         working-directory: ./terraform
         run: |
-          terraform state rm aws_api_gateway_resource.api_resource || true
-          terraform state rm aws_api_gateway_resource.process_document || true
-          terraform state rm aws_api_gateway_resource.task || true
-          terraform state rm aws_api_gateway_resource.task_id || true
-          terraform state rm aws_lambda_function.ai_doc_parser || true
-          terraform state rm aws_api_gateway_rest_api.api || true
-          # Add these lines to remove methods and permissions
-          terraform state rm aws_api_gateway_method.process_document_post || true
-          terraform state rm aws_api_gateway_method.task_id_get || true
-          terraform state rm aws_api_gateway_integration.process_document_integration || true
-          terraform state rm aws_api_gateway_integration.task_id_integration || true
-          terraform state rm aws_lambda_permission.api_gateway || true
-        continue-on-error: true
-
-      # Basic resource imports
-      - name: Import basic resources
-        working-directory: ./terraform
-        run: |
-          # Import ECR repository if it exists
-          if aws ecr describe-repositories --repository-names ai-doc-parser-ecr 2>/dev/null; then
-            terraform import \
-              -var="aws_region=${{ env.AWS_REGION }}" \
-              -var="api_key=${{ secrets.API_KEY }}" \
-              -var="db_host=${{ secrets.DB_HOST }}" \
-              -var="db_name=${{ secrets.DB_NAME }}" \
-              -var="db_password=${{ secrets.DB_PASSWORD }}" \
-              -var="db_port=${{ secrets.DB_PORT }}" \
-              -var="db_user=${{ secrets.DB_USER }}" \
-              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-              aws_ecr_repository.ai_doc_parser ai-doc-parser-ecr || true
-          fi
-          
-          # Import IAM role if it exists
-          if aws iam get-role --role-name ai-doc-parser-lambda-role 2>/dev/null; then
-            terraform import \
-              -var="aws_region=${{ env.AWS_REGION }}" \
-              -var="api_key=${{ secrets.API_KEY }}" \
-              -var="db_host=${{ secrets.DB_HOST }}" \
-              -var="db_name=${{ secrets.DB_NAME }}" \
-              -var="db_password=${{ secrets.DB_PASSWORD }}" \
-              -var="db_port=${{ secrets.DB_PORT }}" \
-              -var="db_user=${{ secrets.DB_USER }}" \
-              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-              aws_iam_role.lambda_role ai-doc-parser-lambda-role || true
-          fi
-          
-          # Import S3 bucket if it exists
-          if aws s3api head-bucket --bucket ai-doc-parser-s3 2>/dev/null; then
-            terraform import \
-              -var="aws_region=${{ env.AWS_REGION }}" \
-              -var="api_key=${{ secrets.API_KEY }}" \
-              -var="db_host=${{ secrets.DB_HOST }}" \
-              -var="db_name=${{ secrets.DB_NAME }}" \
-              -var="db_password=${{ secrets.DB_PASSWORD }}" \
-              -var="db_port=${{ secrets.DB_PORT }}" \
-              -var="db_user=${{ secrets.DB_USER }}" \
-              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-              aws_s3_bucket.ai_doc_parser ai-doc-parser-s3 || true
-          fi
-          
-          # Import API Gateway if it exists
-          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text || echo "")
-          if [ ! -z "$API_ID" ]; then
-            terraform import \
-              -var="aws_region=${{ env.AWS_REGION }}" \
-              -var="api_key=${{ secrets.API_KEY }}" \
-              -var="db_host=${{ secrets.DB_HOST }}" \
-              -var="db_name=${{ secrets.DB_NAME }}" \
-              -var="db_password=${{ secrets.DB_PASSWORD }}" \
-              -var="db_port=${{ secrets.DB_PORT }}" \
-              -var="db_user=${{ secrets.DB_USER }}" \
-              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-              aws_api_gateway_rest_api.api $API_ID || true
-              
-            # Import API Gateway resources if they exist
-            ROOT_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/'].id" --output text)
-            
-            # Import /api resource
-            API_RESOURCE_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api'].id" --output text)
-            if [ ! -z "$API_RESOURCE_ID" ]; then
-              terraform import \
-                -var="aws_region=${{ env.AWS_REGION }}" \
-                -var="api_key=${{ secrets.API_KEY }}" \
-                -var="db_host=${{ secrets.DB_HOST }}" \
-                -var="db_name=${{ secrets.DB_NAME }}" \
-                -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                -var="db_port=${{ secrets.DB_PORT }}" \
-                -var="db_user=${{ secrets.DB_USER }}" \
-                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                aws_api_gateway_resource.api_resource $API_ID/$API_RESOURCE_ID || true
-            fi
-            
-            # Import /api/process-document resource
-            PROCESS_DOC_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/process-document'].id" --output text)
-            if [ ! -z "$PROCESS_DOC_ID" ]; then
-              terraform import \
-                -var="aws_region=${{ env.AWS_REGION }}" \
-                -var="api_key=${{ secrets.API_KEY }}" \
-                -var="db_host=${{ secrets.DB_HOST }}" \
-                -var="db_name=${{ secrets.DB_NAME }}" \
-                -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                -var="db_port=${{ secrets.DB_PORT }}" \
-                -var="db_user=${{ secrets.DB_USER }}" \
-                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                aws_api_gateway_resource.process_document $API_ID/$PROCESS_DOC_ID || true
-            fi
-            
-            # Import /api/task resource
-            TASK_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/task'].id" --output text)
-            if [ ! -z "$TASK_ID" ]; then
-              terraform import \
-                -var="aws_region=${{ env.AWS_REGION }}" \
-                -var="api_key=${{ secrets.API_KEY }}" \
-                -var="db_host=${{ secrets.DB_HOST }}" \
-                -var="db_name=${{ secrets.DB_NAME }}" \
-                -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                -var="db_port=${{ secrets.DB_PORT }}" \
-                -var="db_user=${{ secrets.DB_USER }}" \
-                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                aws_api_gateway_resource.task $API_ID/$TASK_ID || true
-            fi
-            
-            # Import /api/task/{task_id} resource
-            TASK_ID_PATH=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/task/{task_id}'].id" --output text)
-            if [ ! -z "$TASK_ID_PATH" ]; then
-              terraform import \
-                -var="aws_region=${{ env.AWS_REGION }}" \
-                -var="api_key=${{ secrets.API_KEY }}" \
-                -var="db_host=${{ secrets.DB_HOST }}" \
-                -var="db_name=${{ secrets.DB_NAME }}" \
-                -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                -var="db_port=${{ secrets.DB_PORT }}" \
-                -var="db_user=${{ secrets.DB_USER }}" \
-                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                aws_api_gateway_resource.task_id $API_ID/$TASK_ID_PATH || true
-            fi
-          fi
-        continue-on-error: true
-
-      - name: Terraform Validate
-        working-directory: ./terraform
-        run: terraform validate
+          terraform fmt -check
+          terraform validate
 
       - name: Create ECR Repository and IAM Roles
-        id: create_ecr_iam
         working-directory: ./terraform
+        run: terraform apply -auto-approve -target=aws_ecr_repository.ai_doc_parser -target=aws_iam_role.lambda_role -target=aws_iam_role_policy.lambda_s3_policy -target=aws_iam_role_policy_attachment.lambda_logs
+        env:
+          TF_VAR_api_key: ${{ secrets.API_KEY }}
+          TF_VAR_db_host: ${{ secrets.DB_HOST }}
+          TF_VAR_db_name: ${{ secrets.DB_NAME }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_db_port: ${{ secrets.DB_PORT }}
+          TF_VAR_db_user: ${{ secrets.DB_USER }}
+          TF_VAR_openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Get ECR Repository URI
+        id: get-ecr-uri
         run: |
-          terraform apply -auto-approve \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="api_key=${{ secrets.API_KEY }}" \
-            -var="db_host=${{ secrets.DB_HOST }}" \
-            -var="db_name=${{ secrets.DB_NAME }}" \
-            -var="db_password=${{ secrets.DB_PASSWORD }}" \
-            -var="db_port=${{ secrets.DB_PORT }}" \
-            -var="db_user=${{ secrets.DB_USER }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-            -target=aws_ecr_repository.ai_doc_parser \
-            -target=aws_iam_role.lambda_role \
-            -target=aws_iam_role_policy.lambda_s3_policy \
-            -target=aws_iam_role_policy_attachment.lambda_logs
-        continue-on-error: true
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_REPO="ai-doc-parser-ecr"
+          ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
+          echo "ECR_URI=${ECR_URI}" >> $GITHUB_ENV
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-        
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ env.ECR_URI }}:latest
 
-      - name: Build and Push Docker Image for Lambda
-        id: build_push
-        run: |
-          # Get ECR repository URI
-          ECR_REPO=$(aws ecr describe-repositories --repository-names ai-doc-parser-ecr --query 'repositories[0].repositoryUri' --output text)
-          
-          # Login to ECR
-          aws ecr get-login-password | docker login --username AWS --password-stdin $ECR_REPO
-          
-          # Verify Dockerfile is using AWS Lambda base image
-          if ! grep -q "FROM public.ecr.aws/lambda/python:" Dockerfile; then
-            echo "ERROR: Dockerfile must use the AWS Lambda base image (public.ecr.aws/lambda/python)"
-            cat Dockerfile
-            exit 1
-          fi
-          
-          # Build image specifically for Lambda (no buildx)
-          echo "Building image for Lambda..."
-          docker build -t $ECR_REPO:latest .
-          
-          # Push the image
-          echo "Pushing image to ECR..."
-          docker push $ECR_REPO:latest
-          
-          echo "The image has been built and pushed to $ECR_REPO:latest"
-
-      - name: Deploy S3 Bucket
-        id: deploy_s3
+      - name: Deploy remaining infrastructure
         working-directory: ./terraform
-        run: |
-          terraform apply -auto-approve \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="api_key=${{ secrets.API_KEY }}" \
-            -var="db_host=${{ secrets.DB_HOST }}" \
-            -var="db_name=${{ secrets.DB_NAME }}" \
-            -var="db_password=${{ secrets.DB_PASSWORD }}" \
-            -var="db_port=${{ secrets.DB_PORT }}" \
-            -var="db_user=${{ secrets.DB_USER }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-            -target=aws_s3_bucket.ai_doc_parser \
-            -target=aws_s3_bucket_ownership_controls.ai_doc_parser
-        continue-on-error: true
+        run: terraform apply -auto-approve
+        env:
+          TF_VAR_api_key: ${{ secrets.API_KEY }}
+          TF_VAR_db_host: ${{ secrets.DB_HOST }}
+          TF_VAR_db_name: ${{ secrets.DB_NAME }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_db_port: ${{ secrets.DB_PORT }}
+          TF_VAR_db_user: ${{ secrets.DB_USER }}
+          TF_VAR_openai_api_key: ${{ secrets.OPENAI_API_KEY }}
 
-      - name: Create or Update Lambda Function
-        id: deploy_lambda
-        run: |
-          # Get ECR repository URI
-          ECR_REPO=$(aws ecr describe-repositories --repository-names ai-doc-parser-ecr --query 'repositories[0].repositoryUri' --output text)
-          
-          # Check if Lambda exists
-          if aws lambda get-function --function-name ai-doc-parser-lambda > /dev/null 2>&1; then
-            echo "Updating Lambda function..."
-            aws lambda update-function-code \
-              --function-name ai-doc-parser-lambda \
-              --image-uri $ECR_REPO:latest
-          else
-            echo "Creating Lambda function..."
-            # Create Lambda with more parameters
-            aws lambda create-function \
-              --function-name ai-doc-parser-lambda \
-              --role arn:aws:iam::$(aws sts get-caller-identity --query 'Account' --output text):role/ai-doc-parser-lambda-role \
-              --package-type Image \
-              --code ImageUri=$ECR_REPO:latest \
-              --timeout 90 \
-              --memory-size 4096 \
-              --architectures x86_64 \
-              --ephemeral-storage Size=5120 \
-              --environment "Variables={API_KEY=${{ secrets.API_KEY }},DB_HOST=${{ secrets.DB_HOST }},DB_NAME=${{ secrets.DB_NAME }},DB_PASSWORD=${{ secrets.DB_PASSWORD }},DB_PORT=${{ secrets.DB_PORT }},DB_USER=${{ secrets.DB_USER }},OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }},S3_BUCKET_NAME=ai-doc-parser-s3}"
-          fi
-          
-          # Wait for Lambda to be ready
-          echo "Waiting for Lambda to be ready..."
-          aws lambda wait function-active-v2 --function-name ai-doc-parser-lambda
-          
-          echo "Lambda function deployed successfully"
-
-      - name: Deploy API Gateway
-        id: deploy_api
+      - name: Output API URL
         working-directory: ./terraform
-        run: |
-          # Check if API Gateway exists and has the methods we need
-          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text || echo "")
-          
-          if [ ! -z "$API_ID" ]; then
-            # Get existing resources
-            RESOURCES=$(aws apigateway get-resources --rest-api-id $API_ID)
-            
-            # Check for existing methods
-            PROCESS_DOC_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/process-document'].id" --output text)
-            TASK_ID_RESOURCE=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/task/{task_id}'].id" --output text)
-            
-            PROCESS_DOC_METHOD_EXISTS="false"
-            TASK_ID_METHOD_EXISTS="false"
-            
-            if [ ! -z "$PROCESS_DOC_ID" ]; then
-              PROCESS_DOC_METHOD_EXISTS=$(aws apigateway get-method --rest-api-id $API_ID --resource-id $PROCESS_DOC_ID --http-method POST 2>/dev/null && echo "true" || echo "false")
-            fi
-            
-            if [ ! -z "$TASK_ID_RESOURCE" ]; then
-              TASK_ID_METHOD_EXISTS=$(aws apigateway get-method --rest-api-id $API_ID --resource-id $TASK_ID_RESOURCE --http-method GET 2>/dev/null && echo "true" || echo "false")
-            fi
-            
-            # Create a conditional Terraform file based on what exists - AVOID HEREDOC
-            echo '# Conditional API Gateway methods based on existing infrastructure' > api_gateway_methods.tf
-            echo '' >> api_gateway_methods.tf
-            echo '# Only create resources if they do not exist' >> api_gateway_methods.tf
-            echo 'resource "aws_api_gateway_method" "process_document_post" {' >> api_gateway_methods.tf
-            echo "  count         = \"${PROCESS_DOC_METHOD_EXISTS}\" == \"true\" ? 0 : 1" >> api_gateway_methods.tf
-            echo '  rest_api_id   = aws_api_gateway_rest_api.api.id' >> api_gateway_methods.tf
-            echo '  resource_id   = aws_api_gateway_resource.process_document.id' >> api_gateway_methods.tf
-            echo '  http_method   = "POST"' >> api_gateway_methods.tf
-            echo '  authorization = "NONE"' >> api_gateway_methods.tf
-            echo '}' >> api_gateway_methods.tf
-            echo '' >> api_gateway_methods.tf
-            echo 'resource "aws_api_gateway_method" "task_id_get" {' >> api_gateway_methods.tf
-            echo "  count         = \"${TASK_ID_METHOD_EXISTS}\" == \"true\" ? 0 : 1" >> api_gateway_methods.tf
-            echo '  rest_api_id   = aws_api_gateway_rest_api.api.id' >> api_gateway_methods.tf
-            echo '  resource_id   = aws_api_gateway_resource.task_id.id' >> api_gateway_methods.tf
-            echo '  http_method   = "GET"' >> api_gateway_methods.tf
-            echo '  authorization = "NONE"' >> api_gateway_methods.tf
-            echo '}' >> api_gateway_methods.tf
-            echo '' >> api_gateway_methods.tf
-            echo 'resource "aws_api_gateway_integration" "process_document_integration" {' >> api_gateway_methods.tf
-            echo "  count                   = \"${PROCESS_DOC_METHOD_EXISTS}\" == \"true\" ? 0 : 1" >> api_gateway_methods.tf
-            echo '  rest_api_id             = aws_api_gateway_rest_api.api.id' >> api_gateway_methods.tf
-            echo '  resource_id             = aws_api_gateway_resource.process_document.id' >> api_gateway_methods.tf
-            echo '  http_method             = aws_api_gateway_method.process_document_post[0].http_method' >> api_gateway_methods.tf
-            echo '  integration_http_method = "POST"' >> api_gateway_methods.tf
-            echo '  type                    = "AWS_PROXY"' >> api_gateway_methods.tf
-            echo '  uri                     = aws_lambda_function.ai_doc_parser.invoke_arn' >> api_gateway_methods.tf
-            echo '}' >> api_gateway_methods.tf
-            echo '' >> api_gateway_methods.tf
-            echo 'resource "aws_api_gateway_integration" "task_id_integration" {' >> api_gateway_methods.tf
-            echo "  count                   = \"${TASK_ID_METHOD_EXISTS}\" == \"true\" ? 0 : 1" >> api_gateway_methods.tf
-            echo '  rest_api_id             = aws_api_gateway_rest_api.api.id' >> api_gateway_methods.tf
-            echo '  resource_id             = aws_api_gateway_resource.task_id.id' >> api_gateway_methods.tf
-            echo '  http_method             = aws_api_gateway_method.task_id_get[0].http_method' >> api_gateway_methods.tf
-            echo '  integration_http_method = "POST"' >> api_gateway_methods.tf
-            echo '  type                    = "AWS_PROXY"' >> api_gateway_methods.tf
-            echo '  uri                     = aws_lambda_function.ai_doc_parser.invoke_arn' >> api_gateway_methods.tf
-            echo '}' >> api_gateway_methods.tf
-            echo '' >> api_gateway_methods.tf
-            echo 'resource "aws_lambda_permission" "api_gateway" {' >> api_gateway_methods.tf
-            echo '  count         = 1' >> api_gateway_methods.tf
-            echo '  statement_id  = "AllowAPIGatewayInvoke"' >> api_gateway_methods.tf
-            echo '  action        = "lambda:InvokeFunction"' >> api_gateway_methods.tf
-            echo '  function_name = aws_lambda_function.ai_doc_parser.function_name' >> api_gateway_methods.tf
-            echo '  principal     = "apigateway.amazonaws.com"' >> api_gateway_methods.tf
-            echo '  lifecycle {' >> api_gateway_methods.tf
-            echo '    ignore_changes = all' >> api_gateway_methods.tf
-            echo '  }' >> api_gateway_methods.tf
-            echo '}' >> api_gateway_methods.tf
-            
-            # Set up Lambda override file - AVOID HEREDOC
-            echo '# Lambda function override' > lambda_override.tf
-            echo 'resource "aws_lambda_function" "ai_doc_parser" {' >> lambda_override.tf
-            echo '  function_name = "ai-doc-parser-lambda"' >> lambda_override.tf
-            echo '  image_uri     = "${aws_ecr_repository.ai_doc_parser.repository_url}:latest"' >> lambda_override.tf
-            echo '  role          = aws_iam_role.lambda_role.arn' >> lambda_override.tf
-            echo '  package_type  = "Image"' >> lambda_override.tf
-            echo '  memory_size   = 4096' >> lambda_override.tf
-            echo '  timeout       = 90' >> lambda_override.tf
-            echo '  ephemeral_storage {' >> lambda_override.tf
-            echo '    size = 5120' >> lambda_override.tf
-            echo '  }' >> lambda_override.tf
-            echo '  environment {' >> lambda_override.tf
-            echo '    variables = {' >> lambda_override.tf
-            echo '      API_KEY         = var.api_key' >> lambda_override.tf
-            echo '      DB_HOST         = var.db_host' >> lambda_override.tf
-            echo '      DB_NAME         = var.db_name' >> lambda_override.tf
-            echo '      DB_PASSWORD     = var.db_password' >> lambda_override.tf
-            echo '      DB_PORT         = var.db_port' >> lambda_override.tf
-            echo '      DB_USER         = var.db_user' >> lambda_override.tf
-            echo '      OPENAI_API_KEY  = var.openai_api_key' >> lambda_override.tf
-            echo '      S3_BUCKET_NAME  = aws_s3_bucket.ai_doc_parser.bucket' >> lambda_override.tf
-            echo '    }' >> lambda_override.tf
-            echo '  }' >> lambda_override.tf
-            echo '  lifecycle {' >> lambda_override.tf
-            echo '    ignore_changes = all' >> lambda_override.tf
-            echo '  }' >> lambda_override.tf
-            echo '}' >> lambda_override.tf
-          
-          # Import Lambda into state
-          LAMBDA_ARN=$(aws lambda get-function --function-name ai-doc-parser-lambda --query 'Configuration.FunctionArn' --output text)
-          if [ ! -z "$LAMBDA_ARN" ]; then
-            terraform import \
-              -var="aws_region=${{ env.AWS_REGION }}" \
-              -var="api_key=${{ secrets.API_KEY }}" \
-              -var="db_host=${{ secrets.DB_HOST }}" \
-              -var="db_name=${{ secrets.DB_NAME }}" \
-              -var="db_password=${{ secrets.DB_PASSWORD }}" \
-              -var="db_port=${{ secrets.DB_PORT }}" \
-              -var="db_user=${{ secrets.DB_USER }}" \
-              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-              aws_lambda_function.ai_doc_parser $LAMBDA_ARN || true
-          fi
-          
-            # Rest of existing logic remains the same
-            # Check if necessary paths exist
-            API_RESOURCE_ID=$(echo "$RESOURCES" | grep -o '"path": "/api"' | wc -l || echo "0")
-            PROCESS_DOC_RESOURCE=$(echo "$RESOURCES" | grep -o '"path": "/api/process-document"' | wc -l || echo "0")
-            TASK_RESOURCE=$(echo "$RESOURCES" | grep -o '"path": "/api/task"' | wc -l || echo "0")
-            TASK_ID_RESOURCE=$(echo "$RESOURCES" | grep -o '"path": "/api/task/{task_id}"' | wc -l || echo "0")
-            
-            # Only apply what's needed
-            TARGETS=""
-            if [ "$API_RESOURCE_ID" -eq 0 ]; then
-              TARGETS="$TARGETS -target=aws_api_gateway_resource.api_resource"
-            fi
-            if [ "$PROCESS_DOC_RESOURCE" -eq 0 ]; then
-              TARGETS="$TARGETS -target=aws_api_gateway_resource.process_document"
-            fi
-            if [ "$TASK_RESOURCE" -eq 0 ]; then
-              TARGETS="$TARGETS -target=aws_api_gateway_resource.task"
-            fi
-            if [ "$TASK_ID_RESOURCE" -eq 0 ]; then
-              TARGETS="$TARGETS -target=aws_api_gateway_resource.task_id"
-            fi
-            
-            # Apply the API Gateway resources first if needed
-            if [ ! -z "$TARGETS" ]; then
-              terraform apply -auto-approve \
-                -var="aws_region=${{ env.AWS_REGION }}" \
-                -var="api_key=${{ secrets.API_KEY }}" \
-                -var="db_host=${{ secrets.DB_HOST }}" \
-                -var="db_name=${{ secrets.DB_NAME }}" \
-                -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                -var="db_port=${{ secrets.DB_PORT }}" \
-                -var="db_user=${{ secrets.DB_USER }}" \
-                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                $TARGETS
-            fi
-            
-            # Add binary media types
-            BINARY_TYPES=$(aws apigateway get-rest-api --rest-api-id $API_ID --query 'binaryMediaTypes' --output text || echo "")
-            if ! echo "$BINARY_TYPES" | grep -q "multipart/form-data"; then
-              aws apigateway update-rest-api \
-                --rest-api-id $API_ID \
-                --patch-operations '[{"op":"add","path":"/binaryMediaTypes/multipart~1form-data","value":""}]'
-            fi
-            if ! echo "$BINARY_TYPES" | grep -q "*/*"; then
-              aws apigateway update-rest-api \
-                --rest-api-id $API_ID \
-                --patch-operations '[{"op":"add","path":"/binaryMediaTypes/*~1*","value":""}]'
-            fi
-              
-            # Apply for methods only if they don't exist
-            terraform apply -auto-approve \
-              -var="aws_region=${{ env.AWS_REGION }}" \
-              -var="api_key=${{ secrets.API_KEY }}" \
-              -var="db_host=${{ secrets.DB_HOST }}" \
-              -var="db_name=${{ secrets.DB_NAME }}" \
-              -var="db_password=${{ secrets.DB_PASSWORD }}" \
-              -var="db_port=${{ secrets.DB_PORT }}" \
-              -var="db_user=${{ secrets.DB_USER }}" \
-              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}"
-            
-          else
-            # Create the API Gateway from scratch
-              terraform apply -auto-approve \
-                -var="aws_region=${{ env.AWS_REGION }}" \
-                -var="api_key=${{ secrets.API_KEY }}" \
-                -var="db_host=${{ secrets.DB_HOST }}" \
-                -var="db_name=${{ secrets.DB_NAME }}" \
-                -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                -var="db_port=${{ secrets.DB_PORT }}" \
-                -var="db_user=${{ secrets.DB_USER }}" \
-                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-              -target=aws_api_gateway_rest_api.api
-            
-            # Create resources
-            terraform apply -auto-approve \
-              -var="aws_region=${{ env.AWS_REGION }}" \
-              -var="api_key=${{ secrets.API_KEY }}" \
-              -var="db_host=${{ secrets.DB_HOST }}" \
-              -var="db_name=${{ secrets.DB_NAME }}" \
-              -var="db_password=${{ secrets.DB_PASSWORD }}" \
-              -var="db_port=${{ secrets.DB_PORT }}" \
-              -var="db_user=${{ secrets.DB_USER }}" \
-              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-              -target=aws_api_gateway_resource.api_resource \
-              -target=aws_api_gateway_resource.process_document \
-              -target=aws_api_gateway_resource.task \
-              -target=aws_api_gateway_resource.task_id
-            
-            # Create a default Terraform file - AVOID HEREDOC
-            echo '# Default API Gateway methods for new deployment' > api_gateway_methods.tf
-            echo 'resource "aws_api_gateway_method" "process_document_post" {' >> api_gateway_methods.tf
-            echo '  rest_api_id   = aws_api_gateway_rest_api.api.id' >> api_gateway_methods.tf
-            echo '  resource_id   = aws_api_gateway_resource.process_document.id' >> api_gateway_methods.tf
-            echo '  http_method   = "POST"' >> api_gateway_methods.tf
-            echo '  authorization = "NONE"' >> api_gateway_methods.tf
-            echo '}' >> api_gateway_methods.tf
-            echo '' >> api_gateway_methods.tf
-            echo 'resource "aws_api_gateway_method" "task_id_get" {' >> api_gateway_methods.tf
-            echo '  rest_api_id   = aws_api_gateway_rest_api.api.id' >> api_gateway_methods.tf
-            echo '  resource_id   = aws_api_gateway_resource.task_id.id' >> api_gateway_methods.tf
-            echo '  http_method   = "GET"' >> api_gateway_methods.tf
-            echo '  authorization = "NONE"' >> api_gateway_methods.tf
-            echo '}' >> api_gateway_methods.tf
-            echo '' >> api_gateway_methods.tf
-            echo 'resource "aws_api_gateway_integration" "process_document_integration" {' >> api_gateway_methods.tf
-            echo '  rest_api_id             = aws_api_gateway_rest_api.api.id' >> api_gateway_methods.tf
-            echo '  resource_id             = aws_api_gateway_resource.process_document.id' >> api_gateway_methods.tf
-            echo '  http_method             = aws_api_gateway_method.process_document_post.http_method' >> api_gateway_methods.tf
-            echo '  integration_http_method = "POST"' >> api_gateway_methods.tf
-            echo '  type                    = "AWS_PROXY"' >> api_gateway_methods.tf
-            echo '  uri                     = aws_lambda_function.ai_doc_parser.invoke_arn' >> api_gateway_methods.tf
-            echo '}' >> api_gateway_methods.tf
-            echo '' >> api_gateway_methods.tf
-            echo 'resource "aws_api_gateway_integration" "task_id_integration" {' >> api_gateway_methods.tf
-            echo '  rest_api_id             = aws_api_gateway_rest_api.api.id' >> api_gateway_methods.tf
-            echo '  resource_id             = aws_api_gateway_resource.task_id.id' >> api_gateway_methods.tf
-            echo '  http_method             = aws_api_gateway_method.task_id_get.http_method' >> api_gateway_methods.tf
-            echo '  integration_http_method = "POST"' >> api_gateway_methods.tf
-            echo '  type                    = "AWS_PROXY"' >> api_gateway_methods.tf
-            echo '  uri                     = aws_lambda_function.ai_doc_parser.invoke_arn' >> api_gateway_methods.tf
-            echo '}' >> api_gateway_methods.tf
-            echo '' >> api_gateway_methods.tf
-            echo 'resource "aws_lambda_permission" "api_gateway" {' >> api_gateway_methods.tf
-            echo '  statement_id  = "AllowAPIGatewayInvoke"' >> api_gateway_methods.tf
-            echo '  action        = "lambda:InvokeFunction"' >> api_gateway_methods.tf
-            echo '  function_name = aws_lambda_function.ai_doc_parser.function_name' >> api_gateway_methods.tf
-            echo '  principal     = "apigateway.amazonaws.com"' >> api_gateway_methods.tf
-            echo '}' >> api_gateway_methods.tf
-            
-            # Lambda override for new setup
-            echo '# Lambda function override' > lambda_override.tf
-            echo 'resource "aws_lambda_function" "ai_doc_parser" {' >> lambda_override.tf
-            echo '  function_name = "ai-doc-parser-lambda"' >> lambda_override.tf
-            echo '  image_uri     = "${aws_ecr_repository.ai_doc_parser.repository_url}:latest"' >> lambda_override.tf
-            echo '  role          = aws_iam_role.lambda_role.arn' >> lambda_override.tf
-            echo '  package_type  = "Image"' >> lambda_override.tf
-            echo '  memory_size   = 4096' >> lambda_override.tf
-            echo '  timeout       = 90' >> lambda_override.tf
-            echo '  ephemeral_storage {' >> lambda_override.tf
-            echo '    size = 5120' >> lambda_override.tf
-            echo '  }' >> lambda_override.tf
-            echo '  environment {' >> lambda_override.tf
-            echo '    variables = {' >> lambda_override.tf
-            echo '      API_KEY         = var.api_key' >> lambda_override.tf
-            echo '      DB_HOST         = var.db_host' >> lambda_override.tf
-            echo '      DB_NAME         = var.db_name' >> lambda_override.tf
-            echo '      DB_PASSWORD     = var.db_password' >> lambda_override.tf
-            echo '      DB_PORT         = var.db_port' >> lambda_override.tf
-            echo '      DB_USER         = var.db_user' >> lambda_override.tf
-            echo '      OPENAI_API_KEY  = var.openai_api_key' >> lambda_override.tf
-            echo '      S3_BUCKET_NAME  = aws_s3_bucket.ai_doc_parser.bucket' >> lambda_override.tf
-            echo '    }' >> lambda_override.tf
-            echo '  }' >> lambda_override.tf
-            echo '}' >> lambda_override.tf
-            
-            # Apply methods and integrations
-            terraform apply -auto-approve \
-              -var="aws_region=${{ env.AWS_REGION }}" \
-              -var="api_key=${{ secrets.API_KEY }}" \
-              -var="db_host=${{ secrets.DB_HOST }}" \
-              -var="db_name=${{ secrets.DB_NAME }}" \
-              -var="db_password=${{ secrets.DB_PASSWORD }}" \
-              -var="db_port=${{ secrets.DB_PORT }}" \
-              -var="db_user=${{ secrets.DB_USER }}" \
-              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}"
-            
-            # Get the API ID
-            API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text)
-            
-            # Add binary media types
-            if [ ! -z "$API_ID" ]; then
-              aws apigateway update-rest-api \
-                --rest-api-id $API_ID \
-                --patch-operations '[{"op":"add","path":"/binaryMediaTypes/multipart~1form-data","value":""},{"op":"add","path":"/binaryMediaTypes/*~1*","value":""}]'
-            fi
-          fi
-        continue-on-error: true
-
-      - name: Deploy API Gateway Stage
-        id: deploy_stage
-        working-directory: ./terraform
-        run: |
-          # Create or update the deployment
-          terraform apply -auto-approve \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="api_key=${{ secrets.API_KEY }}" \
-            -var="db_host=${{ secrets.DB_HOST }}" \
-            -var="db_name=${{ secrets.DB_NAME }}" \
-            -var="db_password=${{ secrets.DB_PASSWORD }}" \
-            -var="db_port=${{ secrets.DB_PORT }}" \
-            -var="db_user=${{ secrets.DB_USER }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-            -target=aws_api_gateway_deployment.prod
-            
-          # Get API URL directly from AWS CLI since Terraform may have warnings
-          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text)
-          if [ ! -z "$API_ID" ]; then
-            API_URL="https://$API_ID.execute-api.${{ env.AWS_REGION }}.amazonaws.com/prod"
-            echo "API Gateway URL: $API_URL"
-            # Create a file to store the URL for future reference
-            echo $API_URL > api_url.txt
-          else
-            echo "API Gateway not found"
-            exit 1
-          fi
+        run: terraform output api_url
