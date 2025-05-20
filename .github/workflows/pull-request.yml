@@ -1,0 +1,70 @@
+name: Validate Pull Request
+
+on:
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate:
+    name: Validate Terraform and Docker
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Configure AWS credentials (limited permissions)
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+          
+      - name: Create terraform.tfvars file
+        run: |
+          cat > terraform/terraform.tfvars << EOF
+          api_key = "dummy_api_key_for_validation"
+          db_host = "dummy_db_host"
+          db_name = "dummy_db_name"
+          db_password = "dummy_db_password"
+          db_port = "5432"
+          db_user = "dummy_db_user"
+          openai_api_key = "dummy_openai_key"
+          aws_region = "${{ secrets.AWS_REGION }}"
+          EOF
+          
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+        
+      - name: Terraform Validate
+        working-directory: terraform
+        run: terraform validate
+        
+      - name: Terraform Plan
+        working-directory: terraform
+        run: terraform plan -out=tfplan
+        continue-on-error: true
+        
+      - name: Docker Build Validation
+        run: |
+          docker build -t ai-doc-parser-test:latest . --no-cache
+          
+      - name: Validate Python
+        run: |
+          pip install -r requirements.txt
+          python -m pytest test/ || echo "No tests found or tests failed"

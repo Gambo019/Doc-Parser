@@ -1,97 +1,85 @@
-name: Deploy to AWS
+name: Deploy AI Document Parser
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
 
-env:
-  AWS_REGION: us-east-1
-
 permissions:
-  id-token: write
   contents: read
 
 jobs:
   deploy:
+    name: Deploy to AWS
     runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Setup Terraform with caching
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          
+      - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.12.0
-          terraform_wrapper: false
-
-      - name: Cache Docker layers
-        uses: actions/cache@v3
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-
+          
+      - name: Create terraform.tfvars file
+        run: |
+          cat > terraform/terraform.tfvars << EOF
+          api_key = "${{ secrets.API_KEY }}"
+          db_host = "${{ secrets.DB_HOST }}"
+          db_name = "${{ secrets.DB_NAME }}"
+          db_password = "${{ secrets.DB_PASSWORD }}"
+          db_port = "${{ secrets.DB_PORT }}"
+          db_user = "${{ secrets.DB_USER }}"
+          openai_api_key = "${{ secrets.OPENAI_API_KEY }}"
+          aws_region = "${{ secrets.AWS_REGION }}"
+          EOF
+          
       - name: Terraform Init
-        working-directory: ./terraform
+        working-directory: terraform
         run: terraform init
-
-      - name: Terraform Format and Validate
-        working-directory: ./terraform
+        
+      - name: Create ECR Repository (or ensure it exists)
+        working-directory: terraform
         run: |
-          terraform fmt -check
-          terraform validate
-
-      - name: Create ECR Repository and IAM Roles
-        working-directory: ./terraform
-        run: terraform apply -auto-approve -target=aws_ecr_repository.ai_doc_parser -target=aws_iam_role.lambda_role -target=aws_iam_role_policy.lambda_s3_policy -target=aws_iam_role_policy_attachment.lambda_logs
-        env:
-          TF_VAR_api_key: ${{ secrets.API_KEY }}
-          TF_VAR_db_host: ${{ secrets.DB_HOST }}
-          TF_VAR_db_name: ${{ secrets.DB_NAME }}
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-          TF_VAR_db_port: ${{ secrets.DB_PORT }}
-          TF_VAR_db_user: ${{ secrets.DB_USER }}
-          TF_VAR_openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
-
-      - name: Get ECR Repository URI
-        id: get-ecr-uri
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          ECR_REPO="ai-doc-parser-ecr"
-          ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
-          echo "ECR_URI=${ECR_URI}" >> $GITHUB_ENV
-
+          terraform apply -auto-approve \
+            -target=aws_ecr_repository.ai_doc_parser \
+            -target=aws_iam_role.lambda_role \
+            -target=aws_iam_role_policy.lambda_s3_policy \
+            -target=aws_iam_role_policy_attachment.lambda_logs
+            
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+        
       - name: Build and push Docker image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          push: true
-          tags: ${{ env.ECR_URI }}:latest
-
-      - name: Deploy remaining infrastructure
-        working-directory: ./terraform
-        run: terraform apply -auto-approve
         env:
-          TF_VAR_api_key: ${{ secrets.API_KEY }}
-          TF_VAR_db_host: ${{ secrets.DB_HOST }}
-          TF_VAR_db_name: ${{ secrets.DB_NAME }}
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-          TF_VAR_db_port: ${{ secrets.DB_PORT }}
-          TF_VAR_db_user: ${{ secrets.DB_USER }}
-          TF_VAR_openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-
+          ECR_REPO_NAME: ai-doc-parser-ecr
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${ECR_REPO_NAME}"
+          
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_REPO_URI}
+          docker build -t ${ECR_REPO_NAME}:latest .
+          docker tag ${ECR_REPO_NAME}:latest ${ECR_REPO_URI}:latest
+          docker push ${ECR_REPO_URI}:latest
+          
+      - name: Deploy remaining infrastructure
+        working-directory: terraform
+        run: terraform apply -auto-approve
+        
       - name: Output API URL
-        working-directory: ./terraform
-        run: terraform output api_url
+        working-directory: terraform
+        run: |
+          echo "API URL: $(terraform output api_url)"

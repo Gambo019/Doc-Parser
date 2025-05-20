@@ -1,70 +1,76 @@
-name: Destroy AWS Resources
+name: Destroy AWS Infrastructure
 
 on:
   workflow_dispatch:
-
-env:
-  AWS_REGION: us-east-1
+    inputs:
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm destruction of infrastructure'
+        required: true
+        type: string
 
 permissions:
-  id-token: write
   contents: read
 
 jobs:
   destroy:
+    name: Destroy AWS resources
     runs-on: ubuntu-latest
+    if: github.event.inputs.confirm_destroy == 'DESTROY'
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-
+        
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Setup Terraform
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          
+      - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: 1.12.0
-
-      - name: Terraform Init
-        working-directory: ./terraform
-        run: terraform init
-
-      - name: Empty S3 bucket
-        run: aws s3 rm s3://ai-doc-parser-s3 --recursive || true
-
-      - name: Update Terraform configuration for deletion
-        working-directory: ./terraform
+          terraform_version: 1.5.0
+          
+      - name: Create terraform.tfvars file
         run: |
+          cat > terraform/terraform.tfvars << EOF
+          api_key = "${{ secrets.API_KEY }}"
+          db_host = "${{ secrets.DB_HOST }}"
+          db_name = "${{ secrets.DB_NAME }}"
+          db_password = "${{ secrets.DB_PASSWORD }}"
+          db_port = "${{ secrets.DB_PORT }}"
+          db_user = "${{ secrets.DB_USER }}"
+          openai_api_key = "${{ secrets.OPENAI_API_KEY }}"
+          aws_region = "${{ secrets.AWS_REGION }}"
+          EOF
+          
+      - name: Empty S3 Bucket
+        run: |
+          aws s3 rm s3://ai-doc-parser-s3 --recursive || echo "Bucket may not exist yet or is already empty"
+          
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+        
+      - name: Ensure force_delete is set
+        working-directory: terraform
+        run: |
+          # For ECR repository
           if ! grep -q "force_delete = true" main.tf; then
             sed -i '/resource "aws_ecr_repository" "ai_doc_parser" {/a \ \ force_delete = true' main.tf
           fi
+          
+          # For S3 bucket
           if ! grep -q "force_destroy = true" main.tf; then
             sed -i '/resource "aws_s3_bucket" "ai_doc_parser" {/a \ \ force_destroy = true' main.tf
           fi
           
-      - name: Apply configuration updates
-        working-directory: ./terraform
+      - name: Apply changes to update resources
+        working-directory: terraform
         run: terraform apply -auto-approve
-        env:
-          TF_VAR_api_key: ${{ secrets.API_KEY }}
-          TF_VAR_db_host: ${{ secrets.DB_HOST }}
-          TF_VAR_db_name: ${{ secrets.DB_NAME }}
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-          TF_VAR_db_port: ${{ secrets.DB_PORT }}
-          TF_VAR_db_user: ${{ secrets.DB_USER }}
-          TF_VAR_openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-
-      - name: Destroy all resources
-        working-directory: ./terraform
+        
+      - name: Destroy infrastructure
+        working-directory: terraform
         run: terraform destroy -auto-approve
-        env:
-          TF_VAR_api_key: ${{ secrets.API_KEY }}
-          TF_VAR_db_host: ${{ secrets.DB_HOST }}
-          TF_VAR_db_name: ${{ secrets.DB_NAME }}
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-          TF_VAR_db_port: ${{ secrets.DB_PORT }}
-          TF_VAR_db_user: ${{ secrets.DB_USER }}
-          TF_VAR_openai_api_key: ${{ secrets.OPENAI_API_KEY }}
