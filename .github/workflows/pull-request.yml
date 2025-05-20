@@ -12,6 +12,7 @@ jobs:
   validate:
     name: Validate Terraform and Docker
     runs-on: ubuntu-latest
+    environment: production
     
     steps:
       - name: Checkout code

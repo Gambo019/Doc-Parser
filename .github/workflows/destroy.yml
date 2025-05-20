@@ -15,6 +15,7 @@ jobs:
   destroy:
     name: Destroy AWS resources
     runs-on: ubuntu-latest
+    environment: production
     if: github.event.inputs.confirm_destroy == 'DESTROY'
     
     steps:
