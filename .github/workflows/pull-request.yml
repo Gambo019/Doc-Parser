@@ -61,6 +61,12 @@ jobs:
         run: terraform plan -out=tfplan
         continue-on-error: true
         
+      - name: Download Tesseract training data
+        run: |
+          wget https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
+          mkdir -p tessdata
+          mv eng.traineddata tessdata/
+          
       - name: Docker Build Validation
         run: |
           docker build -t ai-doc-parser-test:latest . --no-cache
