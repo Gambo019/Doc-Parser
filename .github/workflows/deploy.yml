@@ -300,168 +300,121 @@ jobs:
         id: deploy_api
         working-directory: ./terraform
         run: |
-          # Update Terraform configuration to use the lambda without creating it
-          cat > lambda_override.tf << 'EOT'
-          # This file overrides the creation of the Lambda function
-          # since we created it using the AWS CLI
-          resource "aws_lambda_function" "ai_doc_parser" {
-            function_name = "ai-doc-parser-lambda"
-            image_uri     = "${aws_ecr_repository.ai_doc_parser.repository_url}:latest"
-            role          = aws_iam_role.lambda_role.arn
-            package_type  = "Image"
-            memory_size   = 4096
-            timeout       = 90
-            ephemeral_storage {
-              size = 5120
-            }
-
-            environment {
-              variables = {
-                API_KEY         = var.api_key
-                DB_HOST         = var.db_host
-                DB_NAME         = var.db_name
-                DB_PASSWORD     = var.db_password
-                DB_PORT         = var.db_port
-                DB_USER         = var.db_user
-                OPENAI_API_KEY  = var.openai_api_key
-                S3_BUCKET_NAME  = aws_s3_bucket.ai_doc_parser.bucket
-              }
-            }
-            
-            # Prevent terraform from trying to create the Lambda
-            # (Lambda was created by aws cli)
-            lifecycle {
-              ignore_changes = all
-            }
-          }
-
-          # Override API Gateway methods to prevent conflicts
-          resource "aws_api_gateway_method" "process_document_post" {
-            # Original configuration
-            rest_api_id   = aws_api_gateway_rest_api.api.id
-            resource_id   = aws_api_gateway_resource.process_document.id
-            http_method   = "POST"
-            authorization = "NONE"
-            
-            lifecycle {
-              ignore_changes = all
-            }
-          }
-          
-          resource "aws_api_gateway_method" "task_id_get" {
-            # Original configuration
-            rest_api_id   = aws_api_gateway_rest_api.api.id
-            resource_id   = aws_api_gateway_resource.task_id.id
-            http_method   = "GET"
-            authorization = "NONE"
-            
-            lifecycle {
-              ignore_changes = all
-            }
-          }
-          
-          resource "aws_lambda_permission" "api_gateway" {
-            statement_id  = "AllowAPIGatewayInvoke"
-            action        = "lambda:InvokeFunction"
-            function_name = aws_lambda_function.ai_doc_parser.function_name
-            principal     = "apigateway.amazonaws.com"
-            
-            lifecycle {
-              ignore_changes = all
-            }
-          }
-          EOT
-          
-          # Import Lambda into state
-          LAMBDA_ARN=$(aws lambda get-function --function-name ai-doc-parser-lambda --query 'Configuration.FunctionArn' --output text)
-          if [ ! -z "$LAMBDA_ARN" ]; then
-            terraform import \
-              -var="aws_region=${{ env.AWS_REGION }}" \
-              -var="api_key=${{ secrets.API_KEY }}" \
-              -var="db_host=${{ secrets.DB_HOST }}" \
-              -var="db_name=${{ secrets.DB_NAME }}" \
-              -var="db_password=${{ secrets.DB_PASSWORD }}" \
-              -var="db_port=${{ secrets.DB_PORT }}" \
-              -var="db_user=${{ secrets.DB_USER }}" \
-              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-              aws_lambda_function.ai_doc_parser $LAMBDA_ARN || true
-          fi
-          
-          # Check if API Gateway exists and import methods if needed
+          # Check if API Gateway exists and has the methods we need
           API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text || echo "")
           
           if [ ! -z "$API_ID" ]; then
             # Get existing resources
             RESOURCES=$(aws apigateway get-resources --rest-api-id $API_ID)
             
-            # Import methods and integrations if they exist
+            # Check for existing methods
             PROCESS_DOC_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/process-document'].id" --output text)
-            if [ ! -z "$PROCESS_DOC_ID" ]; then
-              # Check if method exists
-              METHOD_EXISTS=$(aws apigateway get-method --rest-api-id $API_ID --resource-id $PROCESS_DOC_ID --http-method POST 2>/dev/null && echo "true" || echo "false")
-              if [ "$METHOD_EXISTS" = "true" ]; then
-                # Import method
-                terraform import \
-                  -var="aws_region=${{ env.AWS_REGION }}" \
-                  -var="api_key=${{ secrets.API_KEY }}" \
-                  -var="db_host=${{ secrets.DB_HOST }}" \
-                  -var="db_name=${{ secrets.DB_NAME }}" \
-                  -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                  -var="db_port=${{ secrets.DB_PORT }}" \
-                  -var="db_user=${{ secrets.DB_USER }}" \
-                  -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                  aws_api_gateway_method.process_document_post $API_ID/$PROCESS_DOC_ID/POST || true
-                  
-                # Import integration
-                terraform import \
-                  -var="aws_region=${{ env.AWS_REGION }}" \
-                  -var="api_key=${{ secrets.API_KEY }}" \
-                  -var="db_host=${{ secrets.DB_HOST }}" \
-                  -var="db_name=${{ secrets.DB_NAME }}" \
-                  -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                  -var="db_port=${{ secrets.DB_PORT }}" \
-                  -var="db_user=${{ secrets.DB_USER }}" \
-                  -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                  aws_api_gateway_integration.process_document_integration $API_ID/$PROCESS_DOC_ID/POST || true
-              fi
-            fi
-            
-            # Task ID GET method
             TASK_ID_RESOURCE=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/api/task/{task_id}'].id" --output text)
-            if [ ! -z "$TASK_ID_RESOURCE" ]; then
-              # Check if method exists
-              METHOD_EXISTS=$(aws apigateway get-method --rest-api-id $API_ID --resource-id $TASK_ID_RESOURCE --http-method GET 2>/dev/null && echo "true" || echo "false")
-              if [ "$METHOD_EXISTS" = "true" ]; then
-                # Import method
-                terraform import \
-                  -var="aws_region=${{ env.AWS_REGION }}" \
-                  -var="api_key=${{ secrets.API_KEY }}" \
-                  -var="db_host=${{ secrets.DB_HOST }}" \
-                  -var="db_name=${{ secrets.DB_NAME }}" \
-                  -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                  -var="db_port=${{ secrets.DB_PORT }}" \
-                  -var="db_user=${{ secrets.DB_USER }}" \
-                  -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                  aws_api_gateway_method.task_id_get $API_ID/$TASK_ID_RESOURCE/GET || true
-                  
-                # Import integration
-                terraform import \
-                  -var="aws_region=${{ env.AWS_REGION }}" \
-                  -var="api_key=${{ secrets.API_KEY }}" \
-                  -var="db_host=${{ secrets.DB_HOST }}" \
-                  -var="db_name=${{ secrets.DB_NAME }}" \
-                  -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                  -var="db_port=${{ secrets.DB_PORT }}" \
-                  -var="db_user=${{ secrets.DB_USER }}" \
-                  -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                  aws_api_gateway_integration.task_id_integration $API_ID/$TASK_ID_RESOURCE/GET || true
-              fi
+            
+            PROCESS_DOC_METHOD_EXISTS="false"
+            TASK_ID_METHOD_EXISTS="false"
+            
+            if [ ! -z "$PROCESS_DOC_ID" ]; then
+              PROCESS_DOC_METHOD_EXISTS=$(aws apigateway get-method --rest-api-id $API_ID --resource-id $PROCESS_DOC_ID --http-method POST 2>/dev/null && echo "true" || echo "false")
             fi
             
-            # Import Lambda permission if it exists
-            LAMBDA_PERMS=$(aws lambda get-policy --function-name ai-doc-parser-lambda 2>/dev/null || echo "")
-            if [ ! -z "$LAMBDA_PERMS" ]; then
-              # Try to import the permission (this might fail, but we'll handle that with continue-on-error)
+            if [ ! -z "$TASK_ID_RESOURCE" ]; then
+              TASK_ID_METHOD_EXISTS=$(aws apigateway get-method --rest-api-id $API_ID --resource-id $TASK_ID_RESOURCE --http-method GET 2>/dev/null && echo "true" || echo "false")
+            fi
+            
+            # Create a conditional Terraform file based on what exists
+            cat > api_gateway_methods.tf << EOT
+            # Conditional API Gateway methods based on existing infrastructure
+            
+            # Only create resources if they don't exist
+            resource "aws_api_gateway_method" "process_document_post" {
+              count         = "${PROCESS_DOC_METHOD_EXISTS}" == "true" ? 0 : 1
+              rest_api_id   = aws_api_gateway_rest_api.api.id
+              resource_id   = aws_api_gateway_resource.process_document.id
+              http_method   = "POST"
+              authorization = "NONE"
+            }
+            
+            resource "aws_api_gateway_method" "task_id_get" {
+              count         = "${TASK_ID_METHOD_EXISTS}" == "true" ? 0 : 1
+              rest_api_id   = aws_api_gateway_rest_api.api.id
+              resource_id   = aws_api_gateway_resource.task_id.id
+              http_method   = "GET"
+              authorization = "NONE"
+            }
+            
+            resource "aws_api_gateway_integration" "process_document_integration" {
+              count                   = "${PROCESS_DOC_METHOD_EXISTS}" == "true" ? 0 : 1
+              rest_api_id             = aws_api_gateway_rest_api.api.id
+              resource_id             = aws_api_gateway_resource.process_document.id
+              http_method             = aws_api_gateway_method.process_document_post[0].http_method
+              integration_http_method = "POST"
+              type                    = "AWS_PROXY"
+              uri                     = aws_lambda_function.ai_doc_parser.invoke_arn
+            }
+            
+            resource "aws_api_gateway_integration" "task_id_integration" {
+              count                   = "${TASK_ID_METHOD_EXISTS}" == "true" ? 0 : 1
+              rest_api_id             = aws_api_gateway_rest_api.api.id
+              resource_id             = aws_api_gateway_resource.task_id.id
+              http_method             = aws_api_gateway_method.task_id_get[0].http_method
+              integration_http_method = "POST"
+              type                    = "AWS_PROXY"
+              uri                     = aws_lambda_function.ai_doc_parser.invoke_arn
+            }
+            
+            # Check if Lambda permission exists
+            resource "aws_lambda_permission" "api_gateway" {
+              count         = 1
+              statement_id  = "AllowAPIGatewayInvoke"
+              action        = "lambda:InvokeFunction"
+              function_name = aws_lambda_function.ai_doc_parser.function_name
+              principal     = "apigateway.amazonaws.com"
+              
+              # Prevent duplicate permissions
+              lifecycle {
+                ignore_changes = all
+              }
+            }
+            EOT
+            
+            # Set up Lambda override file
+            cat > lambda_override.tf << 'EOT'
+            # This file overrides the creation of the Lambda function
+            resource "aws_lambda_function" "ai_doc_parser" {
+              function_name = "ai-doc-parser-lambda"
+              image_uri     = "${aws_ecr_repository.ai_doc_parser.repository_url}:latest"
+              role          = aws_iam_role.lambda_role.arn
+              package_type  = "Image"
+              memory_size   = 4096
+              timeout       = 90
+              ephemeral_storage {
+                size = 5120
+              }
+
+              environment {
+                variables = {
+                  API_KEY         = var.api_key
+                  DB_HOST         = var.db_host
+                  DB_NAME         = var.db_name
+                  DB_PASSWORD     = var.db_password
+                  DB_PORT         = var.db_port
+                  DB_USER         = var.db_user
+                  OPENAI_API_KEY  = var.openai_api_key
+                  S3_BUCKET_NAME  = aws_s3_bucket.ai_doc_parser.bucket
+                }
+              }
+              
+              # Prevent terraform from trying to create the Lambda
+              lifecycle {
+                ignore_changes = all
+              }
+            }
+            EOT
+            
+            # Import Lambda into state
+            LAMBDA_ARN=$(aws lambda get-function --function-name ai-doc-parser-lambda --query 'Configuration.FunctionArn' --output text)
+            if [ ! -z "$LAMBDA_ARN" ]; then
               terraform import \
                 -var="aws_region=${{ env.AWS_REGION }}" \
                 -var="api_key=${{ secrets.API_KEY }}" \
@@ -471,7 +424,7 @@ jobs:
                 -var="db_port=${{ secrets.DB_PORT }}" \
                 -var="db_user=${{ secrets.DB_USER }}" \
                 -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                aws_lambda_permission.api_gateway ai-doc-parser-lambda/AllowAPIGatewayInvoke || true
+                aws_lambda_function.ai_doc_parser $LAMBDA_ARN || true
             fi
             
             # Check if necessary paths exist
@@ -481,61 +434,60 @@ jobs:
             TASK_ID_RESOURCE=$(echo "$RESOURCES" | grep -o '"path": "/api/task/{task_id}"' | wc -l || echo "0")
             
             # Only apply what's needed
-            if [ "$API_RESOURCE_ID" -gt 0 ] && [ "$PROCESS_DOC_RESOURCE" -gt 0 ] && [ "$TASK_RESOURCE" -gt 0 ] && [ "$TASK_ID_RESOURCE" -gt 0 ]; then
-              echo "All API resources already exist, applying only integrations and methods"
-              
-              # Add binary media types if not already present
-              BINARY_TYPES=$(aws apigateway get-rest-api --rest-api-id $API_ID --query 'binaryMediaTypes' --output text)
-              if ! echo "$BINARY_TYPES" | grep -q "multipart/form-data"; then
-                aws apigateway update-rest-api \
-                  --rest-api-id $API_ID \
-                  --patch-operations '[{"op":"add","path":"/binaryMediaTypes/multipart~1form-data","value":""}]'
-              fi
-              if ! echo "$BINARY_TYPES" | grep -q "*/*"; then
-                aws apigateway update-rest-api \
-                  --rest-api-id $API_ID \
-                  --patch-operations '[{"op":"add","path":"/binaryMediaTypes/*~1*","value":""}]'
-              fi
-              
-              # Skip applying methods and permissions as they already exist
-              echo "Skipping method and permission creation as they already exist"
-            else
-              # Create any missing resources
-              TARGETS=""
-              if [ "$API_RESOURCE_ID" -eq 0 ]; then
-                TARGETS="$TARGETS -target=aws_api_gateway_resource.api_resource"
-              fi
-              if [ "$PROCESS_DOC_RESOURCE" -eq 0 ]; then
-                TARGETS="$TARGETS -target=aws_api_gateway_resource.process_document"
-              fi
-              if [ "$TASK_RESOURCE" -eq 0 ]; then
-                TARGETS="$TARGETS -target=aws_api_gateway_resource.task"
-              fi
-              if [ "$TASK_ID_RESOURCE" -eq 0 ]; then
-                TARGETS="$TARGETS -target=aws_api_gateway_resource.task_id"
-              fi
-              
-              # Apply the API Gateway (only resources, not methods)
-              if [ ! -z "$TARGETS" ]; then
-                terraform apply -auto-approve \
-                  -var="aws_region=${{ env.AWS_REGION }}" \
-                  -var="api_key=${{ secrets.API_KEY }}" \
-                  -var="db_host=${{ secrets.DB_HOST }}" \
-                  -var="db_name=${{ secrets.DB_NAME }}" \
-                  -var="db_password=${{ secrets.DB_PASSWORD }}" \
-                  -var="db_port=${{ secrets.DB_PORT }}" \
-                  -var="db_user=${{ secrets.DB_USER }}" \
-                  -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-                  $TARGETS
-              fi
-              
-              # Add binary media types
+            TARGETS=""
+            if [ "$API_RESOURCE_ID" -eq 0 ]; then
+              TARGETS="$TARGETS -target=aws_api_gateway_resource.api_resource"
+            fi
+            if [ "$PROCESS_DOC_RESOURCE" -eq 0 ]; then
+              TARGETS="$TARGETS -target=aws_api_gateway_resource.process_document"
+            fi
+            if [ "$TASK_RESOURCE" -eq 0 ]; then
+              TARGETS="$TARGETS -target=aws_api_gateway_resource.task"
+            fi
+            if [ "$TASK_ID_RESOURCE" -eq 0 ]; then
+              TARGETS="$TARGETS -target=aws_api_gateway_resource.task_id"
+            fi
+            
+            # Apply the API Gateway resources first if needed
+            if [ ! -z "$TARGETS" ]; then
+              terraform apply -auto-approve \
+                -var="aws_region=${{ env.AWS_REGION }}" \
+                -var="api_key=${{ secrets.API_KEY }}" \
+                -var="db_host=${{ secrets.DB_HOST }}" \
+                -var="db_name=${{ secrets.DB_NAME }}" \
+                -var="db_password=${{ secrets.DB_PASSWORD }}" \
+                -var="db_port=${{ secrets.DB_PORT }}" \
+                -var="db_user=${{ secrets.DB_USER }}" \
+                -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+                $TARGETS
+            fi
+            
+            # Add binary media types
+            BINARY_TYPES=$(aws apigateway get-rest-api --rest-api-id $API_ID --query 'binaryMediaTypes' --output text || echo "")
+            if ! echo "$BINARY_TYPES" | grep -q "multipart/form-data"; then
               aws apigateway update-rest-api \
                 --rest-api-id $API_ID \
-                --patch-operations '[{"op":"add","path":"/binaryMediaTypes/multipart~1form-data","value":""},{"op":"add","path":"/binaryMediaTypes/*~1*","value":""}]'
+                --patch-operations '[{"op":"add","path":"/binaryMediaTypes/multipart~1form-data","value":""}]'
             fi
+            if ! echo "$BINARY_TYPES" | grep -q "*/*"; then
+              aws apigateway update-rest-api \
+                --rest-api-id $API_ID \
+                --patch-operations '[{"op":"add","path":"/binaryMediaTypes/*~1*","value":""}]'
+            fi
+              
+            # Apply for methods only if they don't exist
+            terraform apply -auto-approve \
+              -var="aws_region=${{ env.AWS_REGION }}" \
+              -var="api_key=${{ secrets.API_KEY }}" \
+              -var="db_host=${{ secrets.DB_HOST }}" \
+              -var="db_name=${{ secrets.DB_NAME }}" \
+              -var="db_password=${{ secrets.DB_PASSWORD }}" \
+              -var="db_port=${{ secrets.DB_PORT }}" \
+              -var="db_user=${{ secrets.DB_USER }}" \
+              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}"
+            
           else
-            # Create the API Gateway from scratch with REST API only
+            # Create the API Gateway from scratch
             terraform apply -auto-approve \
               -var="aws_region=${{ env.AWS_REGION }}" \
               -var="api_key=${{ secrets.API_KEY }}" \
@@ -546,8 +498,8 @@ jobs:
               -var="db_user=${{ secrets.DB_USER }}" \
               -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
               -target=aws_api_gateway_rest_api.api
-              
-            # Then apply resources
+            
+            # Create resources
             terraform apply -auto-approve \
               -var="aws_region=${{ env.AWS_REGION }}" \
               -var="api_key=${{ secrets.API_KEY }}" \
@@ -561,8 +513,51 @@ jobs:
               -target=aws_api_gateway_resource.process_document \
               -target=aws_api_gateway_resource.task \
               -target=aws_api_gateway_resource.task_id
-              
-            # Then apply methods and integrations
+            
+            # Create a default Terraform file for new resources
+            cat > api_gateway_methods.tf << EOT
+            # Default API Gateway methods for new deployment
+            resource "aws_api_gateway_method" "process_document_post" {
+              rest_api_id   = aws_api_gateway_rest_api.api.id
+              resource_id   = aws_api_gateway_resource.process_document.id
+              http_method   = "POST"
+              authorization = "NONE"
+            }
+            
+            resource "aws_api_gateway_method" "task_id_get" {
+              rest_api_id   = aws_api_gateway_rest_api.api.id
+              resource_id   = aws_api_gateway_resource.task_id.id
+              http_method   = "GET"
+              authorization = "NONE"
+            }
+            
+            resource "aws_api_gateway_integration" "process_document_integration" {
+              rest_api_id             = aws_api_gateway_rest_api.api.id
+              resource_id             = aws_api_gateway_resource.process_document.id
+              http_method             = aws_api_gateway_method.process_document_post.http_method
+              integration_http_method = "POST"
+              type                    = "AWS_PROXY"
+              uri                     = aws_lambda_function.ai_doc_parser.invoke_arn
+            }
+            
+            resource "aws_api_gateway_integration" "task_id_integration" {
+              rest_api_id             = aws_api_gateway_rest_api.api.id
+              resource_id             = aws_api_gateway_resource.task_id.id
+              http_method             = aws_api_gateway_method.task_id_get.http_method
+              integration_http_method = "POST"
+              type                    = "AWS_PROXY"
+              uri                     = aws_lambda_function.ai_doc_parser.invoke_arn
+            }
+            
+            resource "aws_lambda_permission" "api_gateway" {
+              statement_id  = "AllowAPIGatewayInvoke"
+              action        = "lambda:InvokeFunction"
+              function_name = aws_lambda_function.ai_doc_parser.function_name
+              principal     = "apigateway.amazonaws.com"
+            }
+            EOT
+            
+            # Apply methods and integrations
             terraform apply -auto-approve \
               -var="aws_region=${{ env.AWS_REGION }}" \
               -var="api_key=${{ secrets.API_KEY }}" \
@@ -571,13 +566,8 @@ jobs:
               -var="db_password=${{ secrets.DB_PASSWORD }}" \
               -var="db_port=${{ secrets.DB_PORT }}" \
               -var="db_user=${{ secrets.DB_USER }}" \
-              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-              -target=aws_api_gateway_method.process_document_post \
-              -target=aws_api_gateway_method.task_id_get \
-              -target=aws_api_gateway_integration.process_document_integration \
-              -target=aws_api_gateway_integration.task_id_integration \
-              -target=aws_lambda_permission.api_gateway
-              
+              -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}"
+            
             # Get the API ID
             API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text)
             
