@@ -176,7 +176,7 @@ async def get_task_status(task_id: str) -> Dict[str, Any]:
 @app.get("/api/welcome")
 async def welcome() -> Dict[str, Any]:
     return {
-        "message": "Welcome to AI API",
+        "message": "Welcome to AI Doc Parser API",
         "status": "active",
         "version": "1.0.0"
     }
