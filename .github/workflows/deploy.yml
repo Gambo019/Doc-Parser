@@ -51,7 +51,16 @@ jobs:
       - name: Terraform Init
         working-directory: terraform
         run: terraform init
-
+        
+      - name: Create ECR Repository (or ensure it exists)
+        working-directory: terraform
+        run: |
+          terraform apply -auto-approve \
+            -target=aws_ecr_repository.ai_doc_parser \
+            -target=aws_iam_role.lambda_role \
+            -target=aws_iam_role_policy.lambda_s3_policy \
+            -target=aws_iam_role_policy_attachment.lambda_logs
+            
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
         
@@ -76,7 +85,7 @@ jobs:
           docker tag ai-doc-parser:latest ${ECR_REPO_URI}:latest
           docker push ${ECR_REPO_URI}:latest
           
-      - name: Apply infrastructure changes
+      - name: Deploy remaining infrastructure
         working-directory: terraform
         run: terraform apply -auto-approve
         
