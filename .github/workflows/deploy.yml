@@ -48,74 +48,35 @@ jobs:
           aws_region = "${{ secrets.AWS_REGION }}"
           EOF
           
-      - name: Terraform Init
+      - name: Check if initial deployment is needed
+        id: check_deployment
+        run: |
+          if aws lambda get-function --function-name ai-doc-parser-lambda 2>/dev/null; then
+            echo "update_only=true" >> $GITHUB_OUTPUT
+          else
+            echo "update_only=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Get ECR URI for later use either way
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/ai-doc-parser-ecr"
+          echo "ecr_repo_uri=${ECR_REPO_URI}" >> $GITHUB_OUTPUT
+      
+      # Only run for initial deployment
+      - name: Terraform Init (Initial Deployment)
+        if: steps.check_deployment.outputs.update_only == 'false'
         working-directory: terraform
         run: terraform init
         
-      - name: Check if resources exist
-        id: check_resources
-        run: |
-          # Check if ECR repository exists
-          if aws ecr describe-repositories --repository-names ai-doc-parser-ecr 2>/dev/null; then
-            echo "ECR repository exists"
-            echo "ecr_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "ECR repository does not exist"
-            echo "ecr_exists=false" >> $GITHUB_OUTPUT
-          fi
-          
-          # Check if Lambda function exists
-          if aws lambda get-function --function-name ai-doc-parser-lambda 2>/dev/null; then
-            echo "Lambda function exists"
-            echo "lambda_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "Lambda function does not exist"
-            echo "lambda_exists=false" >> $GITHUB_OUTPUT
-          fi
-          
-          # Check if S3 bucket exists
-          if aws s3api head-bucket --bucket ai-doc-parser-s3 2>/dev/null; then
-            echo "S3 bucket exists"
-            echo "s3_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "S3 bucket does not exist"
-            echo "s3_exists=false" >> $GITHUB_OUTPUT
-          fi
-          
-          # Check if IAM role exists
-          if aws iam get-role --role-name ai-doc-parser-lambda-role 2>/dev/null; then
-            echo "IAM role exists"
-            echo "iam_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "IAM role does not exist"
-            echo "iam_exists=false" >> $GITHUB_OUTPUT
-          fi
-      
-      - name: Import existing resources into Terraform state if they exist
+      # Only run for initial deployment
+      - name: Deploy Infrastructure (Initial Deployment)
+        if: steps.check_deployment.outputs.update_only == 'false'
         working-directory: terraform
         run: |
-          # Only import if resources exist
-          if [[ "${{ steps.check_resources.outputs.ecr_exists }}" == "true" ]]; then
-            echo "Importing ECR repository into Terraform state"
-            terraform import aws_ecr_repository.ai_doc_parser ai-doc-parser-ecr || true
-          fi
-          
-          if [[ "${{ steps.check_resources.outputs.iam_exists }}" == "true" ]]; then
-            echo "Importing IAM role into Terraform state"
-            terraform import aws_iam_role.lambda_role ai-doc-parser-lambda-role || true
-          fi
-          
-          if [[ "${{ steps.check_resources.outputs.s3_exists }}" == "true" ]]; then
-            echo "Importing S3 bucket into Terraform state"
-            terraform import aws_s3_bucket.ai_doc_parser ai-doc-parser-s3 || true
-          fi
-          
-          if [[ "${{ steps.check_resources.outputs.lambda_exists }}" == "true" ]]; then
-            echo "Importing Lambda function into Terraform state"
-            terraform import aws_lambda_function.ai_doc_parser ai-doc-parser-lambda || true
-          fi
-        continue-on-error: true
+          # Apply terraform to create initial resources
+          terraform apply -auto-approve
             
+      # Run for both initial and updates
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
         
@@ -131,26 +92,34 @@ jobs:
           
       - name: Push Docker image
         env:
-          ECR_REPO_NAME: ai-doc-parser-ecr
+          ECR_REPO_URI: ${{ steps.check_deployment.outputs.ecr_repo_uri }}
         run: |
-          # Create ECR repository if it doesn't exist
-          if [[ "${{ steps.check_resources.outputs.ecr_exists }}" == "false" ]]; then
-            echo "Creating ECR repository"
-            aws ecr create-repository --repository-name ${ECR_REPO_NAME} || true
-          fi
-          
-          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          ECR_REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${ECR_REPO_NAME}"
-          
           aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_REPO_URI}
           docker tag ai-doc-parser:latest ${ECR_REPO_URI}:latest
           docker push ${ECR_REPO_URI}:latest
           
-      - name: Deploy infrastructure with Terraform
-        working-directory: terraform
-        run: terraform apply -auto-approve
-        
-      - name: Output API URL
+      # Only run for updates
+      - name: Update Lambda Function (Updates Only)
+        if: steps.check_deployment.outputs.update_only == 'true'
+        env:
+          ECR_REPO_URI: ${{ steps.check_deployment.outputs.ecr_repo_uri }}
+        run: |
+          # Update the Lambda function's image
+          aws lambda update-function-code \
+            --function-name ai-doc-parser-lambda \
+            --image-uri ${ECR_REPO_URI}:latest
+          
+          echo "Lambda function updated with new container image"
+          
+      - name: Output API URL (Initial Deployment)
+        if: steps.check_deployment.outputs.update_only == 'false'
         working-directory: terraform
         run: |
           echo "API URL: $(terraform output api_url)"
+          
+      - name: Output API URL (Updates)
+        if: steps.check_deployment.outputs.update_only == 'true'
+        run: |
+          # Get the API URL for existing deployment
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='ai-doc-parser-api'].id" --output text)
+          echo "API URL: https://${API_ID}.execute-api.${{ secrets.AWS_REGION }}.amazonaws.com/prod"
