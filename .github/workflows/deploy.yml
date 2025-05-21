@@ -62,20 +62,19 @@ jobs:
           ECR_REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/ai-doc-parser-ecr"
           echo "ecr_repo_uri=${ECR_REPO_URI}" >> $GITHUB_OUTPUT
       
-      # Only run for initial deployment
+      # Initial Deployment - First stage: Create ECR repository
       - name: Terraform Init (Initial Deployment)
         if: steps.check_deployment.outputs.update_only == 'false'
         working-directory: terraform
         run: terraform init
         
-      # Only run for initial deployment
-      - name: Deploy Infrastructure (Initial Deployment)
+      - name: Deploy ECR and S3 (Initial Deployment)
         if: steps.check_deployment.outputs.update_only == 'false'
         working-directory: terraform
         run: |
-          # Apply terraform to create initial resources
-          terraform apply -auto-approve
-            
+          # Apply terraform with targets to create ECR and S3 first
+          terraform apply -auto-approve -target=aws_ecr_repository.ai_doc_parser -target=aws_s3_bucket.ai_doc_parser -target=aws_s3_bucket_ownership_controls.ai_doc_parser
+      
       # Run for both initial and updates
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
@@ -97,6 +96,14 @@ jobs:
           aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_REPO_URI}
           docker tag ai-doc-parser:latest ${ECR_REPO_URI}:latest
           docker push ${ECR_REPO_URI}:latest
+      
+      # Initial Deployment - Second stage: Create remaining resources
+      - name: Deploy Remaining Infrastructure (Initial Deployment)
+        if: steps.check_deployment.outputs.update_only == 'false'
+        working-directory: terraform
+        run: |
+          # Apply terraform to create remaining resources
+          terraform apply -auto-approve
           
       # Only run for updates
       - name: Update Lambda Function (Updates Only)
