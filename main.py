@@ -178,7 +178,7 @@ async def welcome() -> Dict[str, Any]:
     return {
         "message": "Welcome to AI Doc Parser API",
         "status": "active",
-        "version": "1.0.1"
+        "version": "1.0.0"
     }
 
 @app.post("/internal/process-document", include_in_schema=False)
