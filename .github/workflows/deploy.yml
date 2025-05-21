@@ -52,14 +52,69 @@ jobs:
         working-directory: terraform
         run: terraform init
         
-      - name: Create ECR Repository (or ensure it exists)
+      - name: Check if resources exist
+        id: check_resources
+        run: |
+          # Check if ECR repository exists
+          if aws ecr describe-repositories --repository-names ai-doc-parser-ecr 2>/dev/null; then
+            echo "ECR repository exists"
+            echo "ecr_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "ECR repository does not exist"
+            echo "ecr_exists=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check if Lambda function exists
+          if aws lambda get-function --function-name ai-doc-parser-lambda 2>/dev/null; then
+            echo "Lambda function exists"
+            echo "lambda_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Lambda function does not exist"
+            echo "lambda_exists=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check if S3 bucket exists
+          if aws s3api head-bucket --bucket ai-doc-parser-s3 2>/dev/null; then
+            echo "S3 bucket exists"
+            echo "s3_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "S3 bucket does not exist"
+            echo "s3_exists=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check if IAM role exists
+          if aws iam get-role --role-name ai-doc-parser-lambda-role 2>/dev/null; then
+            echo "IAM role exists"
+            echo "iam_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "IAM role does not exist"
+            echo "iam_exists=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Import existing resources into Terraform state if they exist
         working-directory: terraform
         run: |
-          terraform apply -auto-approve \
-            -target=aws_ecr_repository.ai_doc_parser \
-            -target=aws_iam_role.lambda_role \
-            -target=aws_iam_role_policy.lambda_s3_policy \
-            -target=aws_iam_role_policy_attachment.lambda_logs
+          # Only import if resources exist
+          if [[ "${{ steps.check_resources.outputs.ecr_exists }}" == "true" ]]; then
+            echo "Importing ECR repository into Terraform state"
+            terraform import aws_ecr_repository.ai_doc_parser ai-doc-parser-ecr || true
+          fi
+          
+          if [[ "${{ steps.check_resources.outputs.iam_exists }}" == "true" ]]; then
+            echo "Importing IAM role into Terraform state"
+            terraform import aws_iam_role.lambda_role ai-doc-parser-lambda-role || true
+          fi
+          
+          if [[ "${{ steps.check_resources.outputs.s3_exists }}" == "true" ]]; then
+            echo "Importing S3 bucket into Terraform state"
+            terraform import aws_s3_bucket.ai_doc_parser ai-doc-parser-s3 || true
+          fi
+          
+          if [[ "${{ steps.check_resources.outputs.lambda_exists }}" == "true" ]]; then
+            echo "Importing Lambda function into Terraform state"
+            terraform import aws_lambda_function.ai_doc_parser ai-doc-parser-lambda || true
+          fi
+        continue-on-error: true
             
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
@@ -78,6 +133,12 @@ jobs:
         env:
           ECR_REPO_NAME: ai-doc-parser-ecr
         run: |
+          # Create ECR repository if it doesn't exist
+          if [[ "${{ steps.check_resources.outputs.ecr_exists }}" == "false" ]]; then
+            echo "Creating ECR repository"
+            aws ecr create-repository --repository-name ${ECR_REPO_NAME} || true
+          fi
+          
           AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           ECR_REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${ECR_REPO_NAME}"
           
@@ -85,7 +146,7 @@ jobs:
           docker tag ai-doc-parser:latest ${ECR_REPO_URI}:latest
           docker push ${ECR_REPO_URI}:latest
           
-      - name: Deploy remaining infrastructure
+      - name: Deploy infrastructure with Terraform
         working-directory: terraform
         run: terraform apply -auto-approve
         
