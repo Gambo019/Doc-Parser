@@ -31,33 +31,55 @@ class DocumentValidation(BaseModel):
     DateSigned: Optional[datetime] = Field(description="Date when the document was signed (Required but if not applicable, N/A)")
     CreatedAt: Optional[datetime] = Field(description="Document creation timestamp (Required but if not applicable, N/A)")
     UpdatedAt: Optional[datetime] = Field(description="Last update timestamp (Required but if not applicable, N/A)") 
+
+def get_extraction_prompt_schema() -> str:
+    """Generate a string representation of the data model for prompt engineering"""
     
-class DocumentExtraction(BaseModel):
-    """Document extraction model for contract information"""
-    CustomerName: str = Field(description="Name of the customer or company")
-    AccountID: str = Field(description="Unique identifier for the customer account")
-    Quote: Optional[str] = Field(description="Quote number reference", alias="Quote#")
-    CommitmentTerms: str = Field(description="Terms of commitment specified in the contract")
-    BuyingProgram: str = Field(description="Type of buying program or plan")
-    CommitmentFee: float = Field(description="Fee amount for the commitment")
-    SavingsPlanCredit: float = Field(description="Credit amount from savings plan")
-    NetPayableFee: float = Field(description="Net fee amount payable")
-    ContactName: str = Field(description="Name of the primary contact person")
-    TermStartDate: datetime = Field(description="Start date of the contract term")
-    RenewalDate: datetime = Field(description="Date when the contract is up for renewal")
-    BillingTerms: str = Field(description="Terms and conditions for billing")
-    PaymentTerms: str = Field(description="Terms and conditions for payment")
-    PaymentMethod: str = Field(description="Method of payment specified")
-    VATID: Optional[str] = Field(description="VAT identification number")
-    PO: Optional[str] = Field(description="Purchase Order number")
-    CompanyAddress1: str = Field(description="Primary address line of the company")
-    CompanyAddress2: Optional[str] = Field(description="Secondary address line of the company")
-    City: str = Field(description="City name from the address")
-    State: str = Field(description="State or province name")
-    Zip: str = Field(description="Postal or ZIP code")
-    Country: str = Field(description="Country name")
-    EmailInvoiceTo: str = Field(description="Email address for invoice delivery")
-    CustomerTitle: str = Field(description="Title of the customer representative")
-    DateSigned: datetime = Field(description="Date when the document was signed")
-    CreatedAt: datetime = Field(description="Document creation timestamp")
-    UpdatedAt: datetime = Field(description="Last update timestamp") 
+    schema_description = """
+Extract the following information from the document and return it as a valid JSON object:
+
+{
+    "CustomerName": "string - Name of the customer or company (Required)",
+    "AccountID": "string - Unique identifier for the customer account (Required)",
+    "Quote": "string - Quote number reference (Optional)",
+    "CommitmentTerms": "string - Terms of commitment specified in the contract (Required)",
+    "BuyingProgram": "string - Type of buying program or plan (Required)",
+    "CommitmentFee": "float - Fee amount for the commitment (Required)",
+    "SavingsPlanCredit": "float - Credit amount from savings plan (Required)",
+    "NetPayableFee": "float - Net fee amount payable (Required)",
+    "ContactName": "string - Name of the primary contact person (Required)",
+    "TermStartDate": "string(datetime) - Start date of the contract term in ISO format (YYYY-MM-DD) (Required)",
+    "RenewalDate": "string(datetime) - Date when the contract is up for renewal in ISO format (YYYY-MM-DD) (Required)",
+    "BillingTerms": "string - Terms and conditions for billing (Required)",
+    "PaymentTerms": "string - Terms and conditions for payment (Required)",
+    "PaymentMethod": "string - Method of payment specified (Required)",
+    "VATID": "string - VAT identification number (Optional)",
+    "PO": "string - Purchase Order number (Optional)",
+    "CompanyAddress1": "string - Primary address line of the company (Required)",
+    "CompanyAddress2": "string - Secondary address line of the company (Optional)",
+    "City1": "string - City name from the address (Required)",
+    "State1": "string - State or province name (Required)",
+    "Zip1": "string - Postal or ZIP code (Required)",
+    "Country1": "string - Country name (Required)",
+    "City2": "string - City name from the address (Optional)",
+    "State2": "string - State or province name (Optional)",
+    "Zip2": "string - Postal or ZIP code (Optional)",
+    "Country2": "string - Country name (Optional)",
+    "EmailInvoiceTo": "string - Email address for invoice delivery (Required)",
+    "CustomerTitle": "string - Title of the customer representative (Required)",
+    "DateSigned": "string(datetime) - Date when the document was signed in ISO format (YYYY-MM-DD) (Required)",
+    "CreatedAt": "string(datetime) - Document creation timestamp in ISO format (YYYY-MM-DDTHH:MM:SS) (Required)",
+    "UpdatedAt": "string(datetime) - Last update timestamp in ISO format (YYYY-MM-DDTHH:MM:SS) (Required)"
+}
+
+Important instructions:
+1. Absolutly find everything you can from the document
+2. If information is not found or not applicable, use null for optional fields and required fields(datetime, float) as specified, 'N/A' for required fields(string) as specified
+3. Return ONLY a valid JSON object, no additional text or explanation
+4. For dates, use ISO format (YYYY-MM-DD for dates, YYYY-MM-DDTHH:MM:SS for timestamps) in the format of string
+5. For numeric values, use float (not strings)
+6. Ensure all field names match exactly as shown above
+7. Do not include any fields not listed in the schema
+"""
+    
+    return schema_description 

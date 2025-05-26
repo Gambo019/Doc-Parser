@@ -13,10 +13,7 @@ pandas==2.2.3
 python-magic==0.4.27
 
 # LLM and AI
-llama-index==0.12.30
-llama-index-core==0.12.30
-llama-index-llms-openai==0.3.33
-llama-index-readers-file==0.4.7
+openai==1.78.1
 
 # Utilities
 loguru==0.7.3
