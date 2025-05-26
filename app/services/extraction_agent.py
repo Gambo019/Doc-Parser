@@ -24,14 +24,20 @@ class ExtractionAgent:
             
             # Create the full prompt
             full_prompt = f"""
+--------------------------------<Instructions-Start>--------------------------------
 {schema_prompt}
+--------------------------------<Instructions-End>--------------------------------
 
 Please extract information from the following document:
 
+--------------------------------<Document-Start>--------------------------------
 {context}
+--------------------------------<Document-End>--------------------------------
 
 Return the extracted information as a JSON object following the schema above:
 """
+            
+            logger.info(f"Content: {full_prompt}")
             
             logger.info(f"Sending extraction request to GPT-4o for document with {len(content)} characters")
             
