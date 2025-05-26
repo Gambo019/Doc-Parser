@@ -24,17 +24,26 @@ class ExtractionAgent:
             
             # Create the full prompt
             full_prompt = f"""
---------------------------------<Instructions-Start>--------------------------------
+### Schema ###
+--------------------------------<Schema-Start>--------------------------------
 {schema_prompt}
---------------------------------<Instructions-End>--------------------------------
+--------------------------------<Schema-End>--------------------------------
 
-Please extract information from the following document:
+Please extract information from the following contract document and return the information in the JSON object following the schema above:
 
+### Document ###
 --------------------------------<Document-Start>--------------------------------
 {context}
 --------------------------------<Document-End>--------------------------------
 
-Return the extracted information as a JSON object following the schema above:
+### Important Instructions ###
+1. You MUST absolutely fill "ALL FIELDS" of the Schema ​​that can be found from the document.
+2. If a value absolutely does not exist in the document, use null for optional fields and required fields(datetime, float) as specified, 'N/A' for required fields(string) as specified. But you must absolutely follow the first instruction.
+3. Return ONLY a valid JSON object, no additional text or explanation
+4. For dates, use ISO format (YYYY-MM-DD for dates, YYYY-MM-DDTHH:MM:SS for timestamps) in the format of string.
+5. For numeric values, use float (not strings).
+6. Ensure all field names match exactly as shown above
+7. Do not include any fields not listed in the schema
 """
             
             logger.info(f"Content: {full_prompt}")

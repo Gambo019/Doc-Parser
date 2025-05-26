@@ -36,8 +36,6 @@ def get_extraction_prompt_schema() -> str:
     """Generate a string representation of the data model for prompt engineering"""
     
     schema_description = """
-Extract the following information from the document and return it as a valid JSON object:
-
 {
     "CustomerName": "string - Name of the customer or company (Required)",
     "AccountID": "string - Unique identifier for the customer account (Required)",
@@ -71,15 +69,6 @@ Extract the following information from the document and return it as a valid JSO
     "CreatedAt": "string(datetime) - Document creation timestamp in ISO format (YYYY-MM-DDTHH:MM:SS) (Required)",
     "UpdatedAt": "string(datetime) - Last update timestamp in ISO format (YYYY-MM-DDTHH:MM:SS) (Required)"
 }
-
-Important instructions:
-1. Absolutly find everything you can from the document
-2. If information is not found or not applicable, use null for optional fields and required fields(datetime, float) as specified, 'N/A' for required fields(string) as specified
-3. Return ONLY a valid JSON object, no additional text or explanation
-4. For dates, use ISO format (YYYY-MM-DD for dates, YYYY-MM-DDTHH:MM:SS for timestamps) in the format of string
-5. For numeric values, use float (not strings)
-6. Ensure all field names match exactly as shown above
-7. Do not include any fields not listed in the schema
 """
     
     return schema_description 
