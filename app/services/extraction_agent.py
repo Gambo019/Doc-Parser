@@ -11,7 +11,7 @@ class ExtractionAgent:
     def __init__(self):
         # Set up OpenAI client
         openai.api_key = settings.OPENAI_API_KEY
-        self.model = "gpt-4o"
+        self.model = "gpt-4.1"
         
     def extract(self, metadata: Dict[str, Any], content: str) -> Dict[str, Any]:
         """Extract structured information from document content"""
