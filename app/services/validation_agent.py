@@ -9,9 +9,9 @@ class ValidationAgent:
     
     def __init__(self):
         self.validation_rules = {
-            'date_fields': ['TermStartDate', 'RenewalDate', 'DateSigned'],
-            'numeric_fields': ['CommitmentFee', 'SavingsPlanCredit', 'NetPayableFee'],
-            'email_fields': ['EmailInvoiceTo']
+            'date_fields': ['term_start_date', 'renewal_date', 'date_signed'],
+            'numeric_fields': ['commitment_fee', 'savings_plan_credit', 'net_payable_fee'],
+            'email_fields': ['email_invoice_to']
         }
     
     def validate(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -24,10 +24,10 @@ class ValidationAgent:
         }
         
         try:
-            # Check for required CustomerName
-            if not extracted_data.get('CustomerName'):
+            # Check for required customer_name
+            if not extracted_data.get('customer_name'):
                 validation_results['is_valid'] = False
-                validation_results['errors'].append("CustomerName is required")
+                validation_results['errors'].append("customer_name is required")
                 return validation_results
 
             # Basic Pydantic model validation
@@ -63,7 +63,7 @@ class ValidationAgent:
                 # Convert to naive datetime for comparison
                 if date_value.tzinfo:
                     date_value = date_value.replace(tzinfo=None)
-                if date_value > current_date and field != 'RenewalDate':
+                if date_value > current_date and field != 'renewal_date':
                     results['warnings'].append(f"{field} is in the future")
                         
     def _validate_numeric_values(self, data: DocumentValidation, results: Dict[str, Any]):
@@ -85,7 +85,7 @@ class ValidationAgent:
     
     def _validate_business_rules(self, data: DocumentValidation, results: Dict[str, Any]):
         """Validate business-specific rules"""
-        if all(value is not None for value in [data.CommitmentFee, data.SavingsPlanCredit, data.NetPayableFee]):
-            calculated_net = data.CommitmentFee - data.SavingsPlanCredit
-            if abs(calculated_net - data.NetPayableFee) > 0.01:
-                results['warnings'].append("NetPayableFee doesn't match CommitmentFee minus SavingsPlanCredit") 
+        if all(value is not None for value in [data.commitment_fee, data.savings_plan_credit, data.net_payable_fee]):
+            calculated_net = data.commitment_fee - data.savings_plan_credit
+            if abs(calculated_net - data.net_payable_fee) > 0.01:
+                results['warnings'].append("net_payable_fee doesn't match commitment_fee minus savings_plan_credit") 
