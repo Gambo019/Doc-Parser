@@ -311,7 +311,7 @@ async def process_pbm_document(file: UploadFile = File(...)) -> Dict[str, Any]:
         
         # Prepare payload for internal PBM endpoint - API Gateway v2 format
         payload = {
-            "version": "2.1",
+            "version": "2.0",
             "routeKey": "POST /internal/process-pbm-document",
             "rawPath": "/internal/process-pbm-document",
             "rawQueryString": "",
