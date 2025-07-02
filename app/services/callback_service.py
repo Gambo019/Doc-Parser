@@ -53,8 +53,19 @@ class CallbackService:
     def send_callback_sync(self, callback_url: str, payload: Dict[str, Any]) -> bool:
         """Synchronous wrapper for sending callbacks"""
         try:
-            # Use asyncio.run to handle the async call in sync context
-            return asyncio.run(self.send_callback(callback_url, payload))
+            loop = None
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+
+            if loop and loop.is_running():
+                # We're in an event loop (e.g., FastAPI, Lambda)
+                asyncio.create_task(self.send_callback(callback_url, payload))
+                return True  # Can't get result synchronously, but task is scheduled
+            else:
+                # No event loop, safe to run synchronously
+                return asyncio.run(self.send_callback(callback_url, payload))
         except Exception as e:
             logger.error(f"Error in sync callback wrapper: {str(e)}")
             return False 
