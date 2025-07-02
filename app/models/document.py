@@ -1,6 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 
 class DocumentValidation(BaseModel):
     """Document validation model for contract information"""
@@ -30,7 +30,15 @@ class DocumentValidation(BaseModel):
     customer_title: Optional[str] = Field(description="Title of the customer representative (Required but if not applicable, N/A)")
     date_signed: Optional[datetime] = Field(description="Date when the document was signed (Required but if not applicable, N/A)")
     created_at: Optional[datetime] = Field(description="Document creation timestamp (Required but if not applicable, N/A)")
-    updated_at: Optional[datetime] = Field(description="Last update timestamp (Required but if not applicable, N/A)") 
+    updated_at: Optional[datetime] = Field(description="Last update timestamp (Required but if not applicable, N/A)")
+
+    @field_validator('term_start_date', 'renewal_date', 'date_signed', 'created_at', 'updated_at', mode='before')
+    @classmethod
+    def handle_na_dates(cls, v: Any) -> Any:
+        """Convert 'N/A' strings to None for date fields"""
+        if isinstance(v, str) and v.strip().upper() == 'N/A':
+            return None
+        return v
 
 def get_extraction_prompt_schema() -> str:
     """Generate a string representation of the data model for prompt engineering"""

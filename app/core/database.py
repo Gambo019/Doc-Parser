@@ -14,27 +14,26 @@ class DateTimeEncoder(json.JSONEncoder):
 
 class Database:
     def __init__(self):
-        self.conn = None
-        self.connect()
-        self.create_tables()
-        
-    def connect(self):
-        """Connect to PostgreSQL database"""
         try:
             self.conn = psycopg2.connect(
                 host=settings.DB_HOST,
                 port=settings.DB_PORT,
-                database=settings.DB_NAME,
+                dbname=settings.DB_NAME,
                 user=settings.DB_USER,
                 password=settings.DB_PASSWORD
             )
-            logger.info("Connected to PostgreSQL database")
+            self.create_tables()
         except Exception as e:
-            logger.error(f"Database connection error: {str(e)}")
-            raise
-            
+            logger.error(f"Failed to connect to database: {str(e)}")
+            # Don't raise the exception, just log it
+            # This allows the application to continue even if DB connection fails
+            self.conn = None
+    
     def create_tables(self):
-        """Create necessary tables if they don't exist"""
+        """Create database tables if they don't exist"""
+        if not self.conn:
+            return
+            
         try:
             with self.conn.cursor() as cursor:
                 # Create documents table
@@ -52,7 +51,7 @@ class Database:
                 )
                 """)
                 
-                # Create tasks table (removed task_type, result now references document_id)
+                # Create tasks table with callback_url field
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tasks (
                     task_id VARCHAR(36) PRIMARY KEY,
@@ -60,8 +59,20 @@ class Database:
                     created_at TIMESTAMP NOT NULL,
                     updated_at TIMESTAMP NOT NULL,
                     document_id INTEGER REFERENCES documents(id),
-                    error TEXT
+                    error TEXT,
+                    callback_url TEXT
                 )
+                """)
+                
+                # Add callback_url column if it doesn't exist (for existing installations)
+                cursor.execute("""
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                  WHERE table_name='tasks' AND column_name='callback_url') THEN
+                        ALTER TABLE tasks ADD COLUMN callback_url TEXT;
+                    END IF;
+                END $$;
                 """)
                 
                 self.conn.commit()
@@ -122,8 +133,8 @@ class Database:
                 cursor.execute(
                     """
                     INSERT INTO tasks 
-                    (task_id, status, created_at, updated_at, document_id, error)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    (task_id, status, created_at, updated_at, document_id, error, callback_url)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         task_data["task_id"],
@@ -131,7 +142,8 @@ class Database:
                         task_data["created_at"],
                         task_data["updated_at"],
                         task_data.get("document_id"),
-                        task_data.get("error")
+                        task_data.get("error"),
+                        task_data.get("callback_url")
                     )
                 )
                 self.conn.commit()
@@ -148,7 +160,7 @@ class Database:
                 cursor.execute(
                     """
                     UPDATE tasks 
-                    SET status = %s, updated_at = %s, document_id = %s, error = %s
+                    SET status = %s, updated_at = %s, document_id = %s, error = %s, callback_url = %s
                     WHERE task_id = %s
                     """,
                     (
@@ -156,6 +168,7 @@ class Database:
                         task_data["updated_at"],
                         task_data.get("document_id"),
                         task_data.get("error"),
+                        task_data.get("callback_url"),
                         task_id
                     )
                 )

@@ -1,8 +1,8 @@
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Body
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 import shutil
 import os
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from tempfile import NamedTemporaryFile
 import tempfile
 from pydantic import BaseModel
@@ -48,7 +48,11 @@ class InternalProcessPBMRequest(BaseModel):
     task_id: str
 
 @app.post("/api/process-document")
-async def process_document(file: UploadFile = File(...)) -> Dict[str, Any]:
+async def process_document(
+    file: UploadFile = File(...), 
+    callback_url: Optional[str] = Query(None, description="Optional callback URL to notify when processing completes")
+) -> Dict[str, Any]:
+    """Process documents and extract contract information with optional callback notification"""
     # Create temporary file in Lambda's writable /tmp directory
     tmp_path = None
     try:
@@ -69,8 +73,8 @@ async def process_document(file: UploadFile = File(...)) -> Dict[str, Any]:
             # Document already processed, create a new task linked to the existing document
             logger.info(f"Document with hash {file_hash} already exists, creating task with existing document ID")
             
-            # Create a new task with the existing document ID
-            task_id = task_manager.create_task(document_id=existing_doc["id"])
+            # Create a new task with the existing document ID and callback URL
+            task_id = task_manager.create_task(document_id=existing_doc["id"], callback_url=callback_url)
             
             # Update task status to completed since the document is already processed
             task_manager.update_task_status(task_id, TaskStatus.COMPLETED, document_id=existing_doc["id"])
@@ -96,8 +100,8 @@ async def process_document(file: UploadFile = File(...)) -> Dict[str, Any]:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         
-        # Create a new task
-        task_id = task_manager.create_task()
+        # Create a new task with callback URL
+        task_id = task_manager.create_task(callback_url=callback_url)
         
         # Invoke Lambda function asynchronously (self-invocation)
         import boto3
@@ -247,8 +251,11 @@ async def internal_process_document(request: InternalProcessRequest = Body(...))
         raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
 
 @app.post("/api/process-pbm-document")
-async def process_pbm_document(file: UploadFile = File(...)) -> Dict[str, Any]:
-    """Process PBM contract documents and extract pharmacy benefits management information"""
+async def process_pbm_document(
+    file: UploadFile = File(...),
+    callback_url: Optional[str] = Query(None, description="Optional callback URL to notify when processing completes")
+) -> Dict[str, Any]:
+    """Process PBM contract documents and extract pharmacy benefits management information with optional callback notification"""
     # Create temporary file in Lambda's writable /tmp directory
     tmp_path = None
     try:
@@ -269,8 +276,8 @@ async def process_pbm_document(file: UploadFile = File(...)) -> Dict[str, Any]:
             # Document already processed, create a new task linked to the existing document
             logger.info(f"PBM Document with hash {file_hash} already exists, creating task with existing document ID")
             
-            # Create a new task with the existing document ID
-            task_id = task_manager.create_task(document_id=existing_doc["id"])
+            # Create a new task with the existing document ID and callback URL
+            task_id = task_manager.create_task(document_id=existing_doc["id"], callback_url=callback_url)
             
             # Update task status to completed since the document is already processed
             task_manager.update_task_status(task_id, TaskStatus.COMPLETED, document_id=existing_doc["id"])
@@ -297,8 +304,8 @@ async def process_pbm_document(file: UploadFile = File(...)) -> Dict[str, Any]:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         
-        # Create a new task
-        task_id = task_manager.create_task()
+        # Create a new task with callback URL
+        task_id = task_manager.create_task(callback_url=callback_url)
         
         # Invoke Lambda function asynchronously (self-invocation)
         import boto3

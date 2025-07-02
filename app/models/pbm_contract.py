@@ -1,6 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Any
 from enum import Enum
 
 class ContractType(str, Enum):
@@ -96,6 +96,13 @@ class PBMContractValidation(BaseModel):
     created_at: Optional[datetime] = Field(description="Document creation timestamp")
     updated_at: Optional[datetime] = Field(description="Last update timestamp")
 
+    @field_validator('term_start_date', 'renewal_date', 'date_signed', 'created_at', 'updated_at', mode='before')
+    @classmethod
+    def handle_na_dates(cls, v: Any) -> Any:
+        """Convert 'N/A' strings to None for date fields"""
+        if isinstance(v, str) and v.strip().upper() == 'N/A':
+            return None
+        return v
 
 def get_pbm_extraction_prompt_schema() -> str:
     """Generate a string representation of the PBM contract data model for prompt engineering"""
