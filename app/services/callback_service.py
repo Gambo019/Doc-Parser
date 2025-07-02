@@ -3,6 +3,17 @@ import asyncio
 from typing import Dict, Any, Optional
 from app.core.logger import logger
 import json
+from datetime import datetime
+
+def serialize_datetimes(obj):
+    if isinstance(obj, dict):
+        return {k: serialize_datetimes(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_datetimes(v) for v in obj]
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
+    else:
+        return obj
 
 class CallbackService:
     """Service for handling HTTP callbacks when tasks complete"""
@@ -20,6 +31,7 @@ class CallbackService:
             logger.info(f"Sending callback to: {callback_url}")
             logger.debug(f"Callback payload: {json.dumps(payload, indent=2, default=str)}")
             
+            payload = serialize_datetimes(payload)
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     callback_url,
