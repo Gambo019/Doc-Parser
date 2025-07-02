@@ -86,10 +86,10 @@ class PBMContractValidation(BaseModel):
     payment_method: Optional[str] = Field(description="Method of payment specified")
     company_address1: Optional[str] = Field(description="Primary address line of the company")
     company_address2: Optional[str] = Field(description="Secondary address line of the company")
-    city: Optional[str] = Field(description="City name from the address")
-    state: Optional[str] = Field(description="State or province name")
-    zip_code: Optional[str] = Field(description="Postal or ZIP code")
-    country: Optional[str] = Field(description="Country name")
+    city1: Optional[str] = Field(description="City name from the address")
+    state1: Optional[str] = Field(description="State or province name")
+    zipcode1: Optional[str] = Field(description="Postal or ZIP code")
+    country1: Optional[str] = Field(description="Country name")
     email_invoice_to: Optional[str] = Field(description="Email address for invoice delivery")
     customer_title: Optional[str] = Field(description="Title of the customer representative")
     date_signed: Optional[datetime] = Field(description="Date when the document was signed")
@@ -161,10 +161,14 @@ def get_pbm_extraction_prompt_schema() -> str:
     "payment_method": "string - Method of payment specified (Optional)",
     "company_address1": "string - Primary address line of the company (Required)",
     "company_address2": "string - Secondary address line of the company (Optional)",
-    "city": "string - City name from the address (Optional)",
-    "state": "string - State or province name (Optional)",
-    "zip_code": "string - Postal or ZIP code (Optional)",
-    "country": "string - Country name (Optional)",
+    "city1": "string - City name from the address (Required)",
+    "state1": "string - State or province name (Required)",
+    "zipcode1": "string - Postal or ZIP code (Required)",
+    "country1": "string - Country name (Required)",
+    "city2": "string - City name from the address (Optional)",
+    "state2": "string - State or province name (Optional)",
+    "zipcode2": "string - Postal or ZIP code (Optional)",
+    "country2": "string - Country name (Optional)",
     "email_invoice_to": "string - Email address for invoice delivery (Optional)",
     "customer_title": "string - Title of the customer representative (Optional)",
     "date_signed": "string(datetime) - Date when the document was signed in ISO format (YYYY-MM-DD) (Required)",

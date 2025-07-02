@@ -22,10 +22,10 @@ class DocumentValidation(BaseModel):
     po: Optional[str] = Field(description="Purchase Order number")
     company_address1: Optional[str] = Field(description="Primary address line of the company (Required but if not applicable, N/A)")
     company_address2: Optional[str] = Field(description="Secondary address line of the company")
-    city: Optional[str] = Field(description="City name from the address")
-    state: Optional[str] = Field(description="State or province name")
-    zip_code: Optional[str] = Field(description="Postal or ZIP code")
-    country: Optional[str] = Field(description="Country name")
+    city1: Optional[str] = Field(description="City name from the address")
+    state1: Optional[str] = Field(description="State or province name")
+    zipcode1: Optional[str] = Field(description="Postal or ZIP code")
+    country1: Optional[str] = Field(description="Country name")
     email_invoice_to: Optional[str] = Field(description="Email address for invoice delivery (Required but if not applicable, N/A)")
     customer_title: Optional[str] = Field(description="Title of the customer representative (Required but if not applicable, N/A)")
     date_signed: Optional[datetime] = Field(description="Date when the document was signed (Required but if not applicable, N/A)")
@@ -57,11 +57,11 @@ def get_extraction_prompt_schema() -> str:
     "company_address2": "string - Secondary address line of the company (Optional)",
     "city1": "string - City name from the address (Required)",
     "state1": "string - State or province name (Required)",
-    "zip1": "string - Postal or ZIP code (Required)",
+    "zipcode1": "string - Postal or ZIP code (Required)",
     "country1": "string - Country name (Required)",
     "city2": "string - City name from the address (Optional)",
     "state2": "string - State or province name (Optional)",
-    "zip2": "string - Postal or ZIP code (Optional)",
+    "zipcode2": "string - Postal or ZIP code (Optional)",
     "country2": "string - Country name (Optional)",
     "email_invoice_to": "string - Email address for invoice delivery (Required)",
     "customer_title": "string - Title of the customer representative (Required)",
