@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Body, Query
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Body, Query, Form
 from fastapi.middleware.cors import CORSMiddleware
 import shutil
 import os
@@ -49,8 +49,8 @@ class InternalProcessPBMRequest(BaseModel):
 
 @app.post("/api/process-document")
 async def process_document(
-    file: UploadFile = File(...), 
-    callback_url: Optional[str] = Query(None, description="Optional callback URL to notify when processing completes")
+    file: UploadFile = File(...),
+    callback_url: Optional[str] = Form(None, description="Optional callback URL to notify when processing completes")
 ) -> Dict[str, Any]:
     """Process documents and extract contract information with optional callback notification"""
     # Create temporary file in Lambda's writable /tmp directory
@@ -253,7 +253,7 @@ async def internal_process_document(request: InternalProcessRequest = Body(...))
 @app.post("/api/process-pbm-document")
 async def process_pbm_document(
     file: UploadFile = File(...),
-    callback_url: Optional[str] = Query(None, description="Optional callback URL to notify when processing completes")
+    callback_url: Optional[str] = Form(None, description="Optional callback URL to notify when processing completes")
 ) -> Dict[str, Any]:
     """Process PBM contract documents and extract pharmacy benefits management information with optional callback notification"""
     # Create temporary file in Lambda's writable /tmp directory
