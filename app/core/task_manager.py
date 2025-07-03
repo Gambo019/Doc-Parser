@@ -88,7 +88,7 @@ class TaskManager:
                 "error": error,
                 "callback_url": task_data.get("callback_url")
             }
-        
+            
         # Update database
         try:
             self.db.update_task(task_id, self.tasks[task_id])
@@ -127,9 +127,9 @@ class TaskManager:
                     "s3_key": task_data.get("s3_key")
                 })
             
-            # Send callback asynchronously
+            # Send callback
             callback_url = task_data["callback_url"]
-            success = self.callback_service.send_callback_sync(callback_url, callback_payload)
+            success = self.callback_service.send_callback(callback_url, callback_payload)
             
             if success:
                 logger.info(f"Callback sent successfully for task {task_id}")
