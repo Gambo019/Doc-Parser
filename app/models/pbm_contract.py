@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional, List, Any
 from enum import Enum
 
-class ContractType(str, Enum):
+class ContractTypeEnum(str, Enum):
     MHSA = "MHSA"  # Master Health Services Agreement
     ASO = "ASO"    # Administrative Services Only Agreement
     ASA = "ASA"    # Administrative Services Agreement
@@ -15,7 +15,7 @@ class PBMContractValidation(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     
     # Document Type Classification
-    ContractType: ContractType = Field(description="Type of contract document (MHSA, ASO, ASA, or OTHER)", alias="contract_type")
+    ContractType: ContractTypeEnum = Field(description="Type of contract document (MHSA, ASO, ASA, or OTHER)", alias="contract_type")
     
     # Definitions Section
     AverageWholesalePrice: Optional[str] = Field(description="Average Wholesale Price or AWP definition", alias="average_wholesale_price")

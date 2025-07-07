@@ -1,7 +1,7 @@
 from typing import Dict, Any, List, Optional
 from pydantic import ValidationError
 from datetime import datetime
-from app.models.pbm_contract import PBMContractValidation, ContractType
+from app.models.pbm_contract import PBMContractValidation, ContractTypeEnum
 from app.core.logger import logger
 
 class PBMValidationAgent:
@@ -32,7 +32,7 @@ class PBMValidationAgent:
 
             # Validate ContractType enum
             contract_type = extracted_data.get('ContractType')
-            if contract_type not in [ct.value for ct in ContractType]:
+            if contract_type not in [ct.value for ct in ContractTypeEnum]:
                 validation_results['warnings'].append(f"Unknown ContractType: {contract_type}")
 
             # Basic Pydantic model validation
@@ -100,10 +100,10 @@ class PBMValidationAgent:
             results['warnings'].append(f"Missing several key PBM contract elements: {', '.join(missing_key_fields)}")
         
         # Validate contract type specific rules
-        if data.ContractType == ContractType.MHSA:
+        if data.ContractType == ContractTypeEnum.MHSA:
             if not data.CoveredPharmacyProductsAndServices:
                 results['warnings'].append("MHSA contracts typically include covered pharmacy products and services")
         
-        elif data.ContractType in [ContractType.ASO, ContractType.ASA]:
+        elif data.ContractType in [ContractTypeEnum.ASO, ContractTypeEnum.ASA]:
             if not data.AuditParameters:
                 results['warnings'].append("ASO/ASA contracts typically include audit parameters") 
