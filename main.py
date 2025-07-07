@@ -83,10 +83,17 @@ async def process_document(
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
                 
+            # Construct S3 key and URL for already processed document
+            s3_key = f"documents/{file_hash}{os.path.splitext(file.filename)[1]}"
+            from app.core.config import settings
+            s3_url = f"https://{settings.S3_BUCKET_NAME}.s3.{settings.AWS_REGION}.amazonaws.com/{s3_key}"
+                
             return {
                 "task_id": task_id,
                 "status": TaskStatus.COMPLETED,
-                "message": "Document already processed"
+                "message": "Document already processed",
+                "s3_path": s3_url,
+                "filename": file.filename
             }
         
         # Upload file to S3
@@ -146,10 +153,16 @@ async def process_document(
             Payload=json.dumps(payload)
         )
         
+        # Construct full S3 URL
+        from app.core.config import settings
+        s3_url = f"https://{settings.S3_BUCKET_NAME}.s3.{settings.AWS_REGION}.amazonaws.com/{s3_key}"
+        
         return {
             "task_id": task_id,
             "status": TaskStatus.PENDING,
-            "message": "Document processing started"
+            "message": "Document processing started",
+            "s3_path": s3_url,
+            "filename": file.filename
         }
     except Exception as e:
         # Clean up on error
@@ -286,11 +299,18 @@ async def process_pbm_document(
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
                 
+            # Construct S3 key and URL for already processed PBM document
+            s3_key = f"pbm_documents/{file_hash}{os.path.splitext(file.filename)[1]}"
+            from app.core.config import settings
+            s3_url = f"https://{settings.S3_BUCKET_NAME}.s3.{settings.AWS_REGION}.amazonaws.com/{s3_key}"
+                
             return {
                 "task_id": task_id,
                 "status": TaskStatus.COMPLETED,
                 "message": "PBM document already processed",
-                "document_type": "pbm_contract"
+                "document_type": "pbm_contract",
+                "s3_path": s3_url,
+                "filename": file.filename
             }
         
         # Upload file to S3
@@ -350,11 +370,17 @@ async def process_pbm_document(
             Payload=json.dumps(payload)
         )
         
+        # Construct full S3 URL
+        from app.core.config import settings
+        s3_url = f"https://{settings.S3_BUCKET_NAME}.s3.{settings.AWS_REGION}.amazonaws.com/{s3_key}"
+        
         return {
             "task_id": task_id,
             "status": TaskStatus.PENDING,
             "message": "PBM document processing started",
-            "document_type": "pbm_contract"
+            "document_type": "pbm_contract",
+            "s3_path": s3_url,
+            "filename": file.filename
         }
     except Exception as e:
         # Clean up on error
