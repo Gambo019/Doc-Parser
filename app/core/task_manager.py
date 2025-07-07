@@ -128,6 +128,17 @@ class TaskManager:
             if task_data["status"] == TaskStatus.COMPLETED and task_data.get("document_id"):
                 extracted_data = task_data.get("extracted_data", {})
                 
+                # Add filename and full S3 URL to the extracted data
+                if task_data.get("file_name"):
+                    extracted_data["Filename"] = task_data["file_name"]
+                
+                if task_data.get("s3_key"):
+                    # Construct full S3 URL
+                    from app.core.config import settings
+                    s3_url = f"https://{settings.S3_BUCKET_NAME}.s3.{settings.AWS_REGION}.amazonaws.com/{task_data['s3_key']}"
+                    extracted_data["S3FilePath"] = s3_url
+                
+                # Send extracted data directly as callback payload
                 success = self.callback_service.send_callback(callback_url, extracted_data)
                 
                 if success:
