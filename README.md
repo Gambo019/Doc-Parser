@@ -15,6 +15,8 @@ A FastAPI-based document processing engine that can extract structured informati
 - Full-text content extraction
 - OCR support for scanned PDFs
 - Data validation and business rules enforcement
+- **Callback mechanism for automatic result notifications**
+- Asynchronous task processing with status tracking
 
 ## Prerequisites
 
@@ -80,72 +82,6 @@ chmod +x deploy.sh
    - Set timeout to at least 60 seconds
    - Configure environment variables (OPENAI_API_KEY)
 
-## Testing Lambda Deployment
-
-Save this code as `test_lambda.py`:
-```python
-import boto3
-import json
-import base64
-import os
-from urllib.parse import quote
-
-# Initialize Lambda client
-lambda_client = boto3.client('lambda', region_name='your-region')  # Replace with your region
-
-filename = "example.pdf"
-file_path = os.path.join(os.path.dirname(__file__), filename)
-
-# Read the file
-with open(file_path, 'rb') as file:
-    file_content = file.read()
-
-# Create multipart form-data boundary
-boundary = "boundary123"
-
-# Create form-data content
-form_data = (
-    f'--{boundary}\r\n'
-    f'Content-Disposition: form-data; name="file"; filename="{quote(filename)}"\r\n'
-    f'Content-Type: application/pdf\r\n\r\n'
-).encode('utf-8') + file_content + f'\r\n--{boundary}--\r\n'.encode('utf-8')
-
-# Base64 encode the form data
-encoded_form_data = base64.b64encode(form_data).decode('utf-8')
-
-# Prepare the payload to mimic API Gateway v2 event
-payload = {
-    "version": "2.0",
-    "routeKey": "POST /api/process-document",
-    "rawPath": "/api/process-document",
-    "rawQueryString": "",
-    "headers": {
-        "content-type": f"multipart/form-data; boundary={boundary}"
-    },
-    "requestContext": {
-        "http": {
-            "method": "POST",
-            "path": "/api/process-document",
-            "sourceIp": "127.0.0.1",
-            "userAgent": "boto3/lambda"
-        }
-    },
-    "body": encoded_form_data,
-    "isBase64Encoded": True
-}
-
-# Invoke Lambda function
-response = lambda_client.invoke(
-    FunctionName='your-lambda-function-name',  # Replace with your Lambda function name
-    InvocationType='RequestResponse',
-    Payload=json.dumps(payload)
-)
-
-# Parse and print the response
-response_payload = json.loads(response['Payload'].read())
-print(response_payload)
-```
-
 ## Running the Application
 
 Start the server locally:
@@ -161,53 +97,209 @@ The API will be available at `http://localhost:8000`
 
 **Endpoint:** `POST /api/process-document`
 
-Processes a document and extracts structured information.
+Processes a document and extracts structured information. Supports both callback notifications and polling approaches.
 
 **Request:**
 - Method: POST
 - Content-Type: multipart/form-data
-- Body parameter: `file` (document file)
+- Body parameters:
+  - `file` (required): Document file to process
+  - `callback_url` (optional): URL to receive processing results via HTTP POST
 
-**Example using curl:**
-```bash
-curl -X POST http://localhost:8000/api/process-document \
--H "Content-Type: multipart/form-data" \
--F "file=@path/to/your/document.pdf"
-```
+### Process PBM Document
 
-**Example Response:**
+**Endpoint:** `POST /api/process-pbm-document`
+
+Processes PBM (Pharmacy Benefits Management) contract documents with specialized extraction.
+
+**Request:**
+- Method: POST
+- Content-Type: multipart/form-data
+- Body parameters:
+  - `file` (required): PBM contract document file
+  - `callback_url` (optional): URL to receive processing results via HTTP POST
+
+### Get Task Status
+
+**Endpoint:** `GET /api/task/{task_id}`
+
+Retrieves the current status of a processing task.
+
+**Response:**
 ```json
 {
-    "extracted_data": {
-        "CustomerName": "Example Corp",
-        "AccountID": "ACC123456",
-        "Quote": "Q789",
-        "CommitmentTerms": "12 months",
-        "BuyingProgram": "Enterprise",
-        "CommitmentFee": 5000.00,
-        "SavingsPlanCredit": 500.00,
-        "NetPayableFee": 4500.00,
-        ...
-    }
+  "task_id": "uuid",
+  "status": "pending|processing|completed|failed",
+  "created_at": "2025-07-02T12:28:29.547060",
+  "updated_at": "2025-07-02T12:29:19.872379",
+  "error": null,
+  "document_id": 1,
+  "extracted_data": {...},
+  "validation_status": {...},
+  "s3_key": "documents/..."
 }
 ```
 
-## Testing
+## Processing Approaches
 
-To test the document processing:
+### 1. Callback Approach (Recommended)
 
-1. Ensure the server is running
-2. Use the sample files in the `sample` directory or your own documents
-3. Send a POST request to the processing endpoint
-4. Check the response for extracted information
+**Benefits:**
+- No need for consistent polling
+- Immediate notification when processing completes
+- Reduces API calls and server load
+- More efficient for real-time applications
 
-Example using Python requests:
+**Example using curl:**
+```bash
+curl -X POST "https://your-api.com/api/process-document" \
+  -F "file=@document.pdf" \
+  -F "callback_url=https://your-app.com/webhook"
+```
+
+**Example using Python:**
 ```python
 import requests
-url = "http://localhost:8000/api/process-document"
-files = {"file": open("path/to/document.pdf", "rb")}
-response = requests.post(url, files=files)
-print(response.json())
+
+url = "https://your-api.com/api/process-document"
+callback_url = "https://your-app.com/webhook"
+
+with open("document.pdf", "rb") as file:
+    files = {"file": ("document.pdf", file, "application/pdf")}
+    data = {"callback_url": callback_url}
+    response = requests.post(url, files=files, data=data)
+
+task_data = response.json()
+print(f"Task ID: {task_data['task_id']}")
+print("Processing started - results will be sent to callback URL")
+```
+
+**Callback Payload:**
+When processing completes successfully, your callback URL will receive a POST request with the extracted data directly:
+```json
+{
+  "CustomerName": "Acme Corporation",
+  "AccountId": "AC123456789",
+  "Quote": "Q-2025-07-03-001",
+  "CommitmentTerms": "12 months fixed",
+  "BuyingProgram": "Enterprise Plan",
+  "CommitmentFee": 15000.00,
+  "SavingsPlanCredit": 2000.00,
+  "NetPayableFee": 13000.00,
+  "ContactName": "John Doe",
+  "TermStartDate": "2025-07-01T00:00:00Z",
+  "RenewalDate": "2026-07-01T00:00:00Z",
+  "BillingTerms": "Net 30",
+  "PaymentTerms": "Credit Card",
+  "PaymentMethod": "Visa",
+  "VatId": "VAT123456789",
+  "PurchaseOrderNumber": "PO-987654321",
+  "CompanyAddress1": "123 Main St.",
+  "CompanyAddress2": "Suite 400",
+  "City": "Metropolis",
+  "State": "NY",
+  "ZipCode": "10101",
+  "Country": "USA",
+  "EmailInvoiceTo": "billing@acme.com",
+  "CustomerTitle": "Mr.",
+  "DateSigned": "2025-06-30T15:30:00Z",
+  "Filename": "contract_document.pdf",
+  "S3FilePath": "https://your-bucket.s3.us-east-1.amazonaws.com/documents/abc123.pdf"
+}
+```
+
+**For failed processing**, the callback will receive:
+```json
+{
+  "error": "Error description",
+  "status": "failed"
+}
+```
+
+### 2. Polling Approach (Legacy)
+
+**For cases where callbacks are not available:**
+
+```python
+import requests
+import time
+
+# 1. Submit document for processing
+url = "https://your-api.com/api/process-document"
+with open("document.pdf", "rb") as file:
+    files = {"file": ("document.pdf", file, "application/pdf")}
+    response = requests.post(url, files=files)
+
+task_id = response.json()["task_id"]
+
+# 2. Poll for completion
+while True:
+    status_response = requests.get(f"https://your-api.com/api/task/{task_id}")
+    status_data = status_response.json()
+    
+    if status_data["status"] == "completed":
+        print("Processing completed!")
+        print(status_data["extracted_data"])
+        break
+    elif status_data["status"] == "failed":
+        print(f"Processing failed: {status_data['error']}")
+        break
+    else:
+        print(f"Status: {status_data['status']}")
+        time.sleep(5)  # Wait 5 seconds before next check
+```
+
+## Examples
+
+### PBM Document Processing with Callback
+
+```python
+import requests
+
+url = "https://your-api.com/api/process-pbm-document"
+callback_url = "https://your-app.com/pbm-webhook"
+
+with open("pbm_contract.pdf", "rb") as file:
+    files = {"file": ("pbm_contract.pdf", file, "application/pdf")}
+    data = {"callback_url": callback_url}
+    response = requests.post(url, files=files, data=data)
+
+print(f"PBM processing started: {response.json()}")
+```
+
+### Setting up a Callback Endpoint
+
+```python
+from fastapi import FastAPI, Request
+
+app = FastAPI()
+
+@app.post("/webhook")
+async def process_callback(request: Request):
+    """Handle document processing results"""
+    result = await request.json()
+    
+    # Check if it's an error response
+    if "error" in result and result.get("status") == "failed":
+        print(f"Processing failed: {result['error']}")
+        return {"received": True}
+    
+    # Handle successful extraction - data comes directly
+    customer_name = result.get("CustomerName")
+    account_id = result.get("AccountId")
+    filename = result.get("Filename")
+    s3_path = result.get("S3FilePath")
+    
+    print(f"Document processed successfully!")
+    print(f"Customer: {customer_name}")
+    print(f"Account: {account_id}")
+    print(f"File: {filename}")
+    print(f"S3 Path: {s3_path}")
+    
+    # Process your extracted data here
+    # ...
+    
+    return {"received": True}
 ```
 
 ## Supported Document Types
@@ -227,6 +319,8 @@ The API returns appropriate HTTP status codes:
 
 Error responses include a message explaining the error.
 
+Callback notifications are sent for both successful and failed processing attempts.
+
 ## Development
 
 The project structure:
@@ -234,9 +328,14 @@ The project structure:
 .
 ├── app/
 │ ├── core/
+│ │ ├── task_manager.py    # Async task management
+│ │ └── database.py        # Database operations
 │ ├── models/
-│ └── services/
-├── main.py
+│ ├── services/
+│ │ ├── callback_service.py # HTTP callback handling
+│ │ └── document_processor.py
+│ └── ...
+├── main.py               # FastAPI application and routes
 ├── requirements.txt
 ├── lambda_handler.py
 ├── deploy.sh
@@ -244,9 +343,7 @@ The project structure:
 ```
 
 Key components:
-- `main.py`: FastAPI application and routes
-- `app/services/`: Document processing logic
+- `main.py`: FastAPI application and routes with callback support
+- `app/services/`: Document processing and callback logic
 - `app/models/`: Data models and schemas
-- `app/core/`: Core configurations and utilities
-- `lambda_handler.py`: AWS Lambda handler
-- `deploy.sh`: Deployment script for AWS
+- `app/core/`: Core configurations, task management, and database utilities

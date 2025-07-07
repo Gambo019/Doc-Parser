@@ -109,32 +109,42 @@ class TaskManager:
             if not task_data or not task_data.get("callback_url"):
                 return
             
-            # Prepare callback payload
-            callback_payload = {
-                "task_id": task_data["task_id"],
-                "status": task_data["status"],
-                "created_at": task_data["created_at"],
-                "updated_at": task_data["updated_at"],
-                "error": task_data.get("error"),
-                "document_id": task_data.get("document_id")
-            }
-            
-            # Include document details if task completed successfully
-            if task_data["status"] == TaskStatus.COMPLETED and task_data.get("document_id"):
-                callback_payload.update({
-                    "extracted_data": task_data.get("extracted_data", {}),
-                    "validation_status": task_data.get("validation_status", {}),
-                    "s3_key": task_data.get("s3_key")
-                })
-            
-            # Send callback
             callback_url = task_data["callback_url"]
-            success = self.callback_service.send_callback(callback_url, callback_payload)
             
-            if success:
-                logger.info(f"Callback sent successfully for task {task_id}")
-            else:
-                logger.warning(f"Failed to send callback for task {task_id}")
+            # For failed tasks, send error information
+            if task_data["status"] == TaskStatus.FAILED:
+                callback_payload = {
+                    "error": task_data.get("error", "Processing failed"),
+                    "status": "failed"
+                }
+                success = self.callback_service.send_callback(callback_url, callback_payload)
+                if success:
+                    logger.info(f"Error callback sent successfully for task {task_id}")
+                else:
+                    logger.warning(f"Failed to send error callback for task {task_id}")
+                return
+            
+            # For completed tasks, send extracted data directly
+            if task_data["status"] == TaskStatus.COMPLETED and task_data.get("document_id"):
+                extracted_data = task_data.get("extracted_data", {})
                 
+                # Add filename and full S3 URL to the extracted data
+                if task_data.get("file_name"):
+                    extracted_data["Filename"] = task_data["file_name"]
+                
+                if task_data.get("s3_key"):
+                    # Construct full S3 URL
+                    from app.core.config import settings
+                    s3_url = f"https://{settings.S3_BUCKET_NAME}.s3.{settings.AWS_REGION}.amazonaws.com/{task_data['s3_key']}"
+                    extracted_data["S3FilePath"] = s3_url
+                
+                # Send extracted data directly as callback payload
+                success = self.callback_service.send_callback(callback_url, extracted_data)
+                
+                if success:
+                    logger.info(f"Callback sent successfully for task {task_id}")
+                else:
+                    logger.warning(f"Failed to send callback for task {task_id}")
+                    
         except Exception as e:
             logger.error(f"Error sending callback for task {task_id}: {str(e)}")

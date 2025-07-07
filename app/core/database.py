@@ -28,7 +28,7 @@ class Database:
             # Don't raise the exception, just log it
             # This allows the application to continue even if DB connection fails
             self.conn = None
-    
+            
     def create_tables(self):
         """Create database tables if they don't exist"""
         if not self.conn:
@@ -202,7 +202,8 @@ class Database:
                         t.*,
                         d.extracted_data,
                         d.validation_status,
-                        d.s3_key
+                        d.s3_key,
+                        d.file_name
                     FROM tasks t
                     LEFT JOIN documents d ON t.document_id = d.id
                     WHERE t.task_id = %s
