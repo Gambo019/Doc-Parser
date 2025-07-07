@@ -9,9 +9,9 @@ class PBMValidationAgent:
     
     def __init__(self):
         self.validation_rules = {
-            'date_fields': ['term_start_date', 'renewal_date', 'date_signed'],
-            'email_fields': ['email_invoice_to'],
-            'required_fields': ['contract_type']
+            'date_fields': ['TermStartDate', 'RenewalDate', 'DateSigned'],
+            'email_fields': ['EmailInvoiceTo'],
+            'required_fields': ['ContractType']
         }
     
     def validate(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -24,16 +24,16 @@ class PBMValidationAgent:
         }
         
         try:
-            # Check for required contract_type
-            if not extracted_data.get('contract_type'):
+            # Check for required ContractType
+            if not extracted_data.get('ContractType'):
                 validation_results['is_valid'] = False
-                validation_results['errors'].append("contract_type is required")
+                validation_results['errors'].append("ContractType is required")
                 return validation_results
 
-            # Validate contract_type enum
-            contract_type = extracted_data.get('contract_type')
+            # Validate ContractType enum
+            contract_type = extracted_data.get('ContractType')
             if contract_type not in [ct.value for ct in ContractType]:
-                validation_results['warnings'].append(f"Unknown contract_type: {contract_type}")
+                validation_results['warnings'].append(f"Unknown ContractType: {contract_type}")
 
             # Basic Pydantic model validation
             validated_data = PBMContractValidation(**extracted_data)
@@ -67,7 +67,7 @@ class PBMValidationAgent:
                 # Convert to naive datetime for comparison
                 if date_value.tzinfo:
                     date_value = date_value.replace(tzinfo=None)
-                if date_value > current_date and field != 'renewal_date':
+                if date_value > current_date and field != 'RenewalDate':
                     results['warnings'].append(f"{field} is in the future")
     
     def _validate_email_format(self, data: PBMContractValidation, results: Dict[str, Any]):
@@ -85,10 +85,10 @@ class PBMValidationAgent:
         
         # Check if key PBM elements are present
         key_pbm_fields = [
-            'awp_pricing_discount_guarantees',
-            'retail_brand_30_day_discount',
-            'retail_generic_30_day_discount',
-            'rebates'
+            'AwpPricingDiscountGuarantees',
+            'RetailBrand30DayDiscount',
+            'RetailGeneric30DayDiscount',
+            'Rebates'
         ]
         
         missing_key_fields = []
@@ -100,10 +100,10 @@ class PBMValidationAgent:
             results['warnings'].append(f"Missing several key PBM contract elements: {', '.join(missing_key_fields)}")
         
         # Validate contract type specific rules
-        if data.contract_type == ContractType.MHSA:
-            if not data.covered_pharmacy_products_and_services:
+        if data.ContractType == ContractType.MHSA:
+            if not data.CoveredPharmacyProductsAndServices:
                 results['warnings'].append("MHSA contracts typically include covered pharmacy products and services")
         
-        elif data.contract_type in [ContractType.ASO, ContractType.ASA]:
-            if not data.audit_parameters:
+        elif data.ContractType in [ContractType.ASO, ContractType.ASA]:
+            if not data.AuditParameters:
                 results['warnings'].append("ASO/ASA contracts typically include audit parameters") 

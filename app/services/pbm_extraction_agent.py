@@ -60,7 +60,7 @@ Please extract information from the following PBM (Pharmacy Benefits Management)
 
 5. Find audit-related clauses and fee structures
 
-6. If a value absolutely does not exist in the document, use null for all fields as they are all optional except contract_type.
+6. If a value absolutely does not exist in the document, use null for all fields as they are all optional except ContractType.
 
 7. Return ONLY a valid JSON object, no additional text or explanation
 

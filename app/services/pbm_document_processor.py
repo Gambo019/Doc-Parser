@@ -53,7 +53,7 @@ class PBMDocumentProcessor:
             "extracted_data": extracted_data,
             "validation_status": validation_status,
             "doc_type": doc_type,
-            "contract_type": extracted_data.get("contract_type", "UNKNOWN")
+            "contract_type": extracted_data.get("ContractType", "UNKNOWN")
         }
     
     def _get_reader(self, doc_type: str, file_path: str):
