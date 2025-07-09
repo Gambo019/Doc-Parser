@@ -199,7 +199,7 @@ async def internal_process_document(request: InternalProcessRequest = Body(...))
     tmp_path = None
     try:
         # Process document from S3
-        processor = DocumentProcessor()
+        processor = DocumentProcessor(enable_citations=True)
         logger.info(f"Processing document from S3: {request.s3_key}")
         
         # Download file from S3 to temp location
@@ -369,7 +369,7 @@ async def internal_process_pbm_document(request: InternalProcessPBMRequest = Bod
     tmp_path = None
     try:
         # Process PBM document from S3
-        processor = PBMDocumentProcessor()
+        processor = PBMDocumentProcessor(enable_citations=True)
         logger.info(f"Processing PBM document from S3: {request.s3_key}")
         
         # Download file from S3 to temp location
