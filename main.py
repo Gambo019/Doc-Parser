@@ -39,6 +39,7 @@ class InternalProcessRequest(BaseModel):
     file_hash: str
     original_filename: str
     task_id: str
+    client_id: Optional[str] = None
 
 # Add this new model for PBM internal processing
 class InternalProcessPBMRequest(BaseModel):
@@ -46,11 +47,13 @@ class InternalProcessPBMRequest(BaseModel):
     file_hash: str
     original_filename: str
     task_id: str
+    client_id: Optional[str] = None
 
 @app.post("/api/process-document")
 async def process_document(
     file: UploadFile = File(...),
-    callback_url: Optional[str] = Form(None, description="Optional callback URL to notify when processing completes")
+    callback_url: Optional[str] = Form(None, description="Optional callback URL to notify when processing completes"),
+    client_id: Optional[str] = Form(None, description="Client identifier (UUID format)")
 ) -> Dict[str, Any]:
     """Process documents and extract contract information with optional callback notification"""
     # Create temporary file in Lambda's writable /tmp directory
@@ -73,8 +76,8 @@ async def process_document(
             # Document already processed, create a new task linked to the existing document
             logger.info(f"Document with hash {file_hash} already exists, creating task with existing document ID")
             
-            # Create a new task with the existing document ID and callback URL
-            task_id = task_manager.create_task(document_id=existing_doc["id"], callback_url=callback_url)
+            # Create a new task with the existing document ID, callback URL, and client_id
+            task_id = task_manager.create_task(document_id=existing_doc["id"], callback_url=callback_url, client_id=client_id)
             
             # Update task status to completed since the document is already processed
             task_manager.update_task_status(task_id, TaskStatus.COMPLETED, document_id=existing_doc["id"])
@@ -100,8 +103,8 @@ async def process_document(
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         
-        # Create a new task with callback URL
-        task_id = task_manager.create_task(callback_url=callback_url)
+        # Create a new task with callback URL and client_id
+        task_id = task_manager.create_task(callback_url=callback_url, client_id=client_id)
         
         # Invoke Lambda function asynchronously (self-invocation)
         import boto3
@@ -134,7 +137,8 @@ async def process_document(
                 "s3_key": s3_key,
                 "file_hash": file_hash,
                 "original_filename": file.filename,
-                "task_id": task_id
+                "task_id": task_id,
+                "client_id": client_id
             }),
             "isBase64Encoded": False
         }
@@ -254,7 +258,8 @@ async def internal_process_document(request: InternalProcessRequest = Body(...))
 @app.post("/api/process-pbm-document")
 async def process_pbm_document(
     file: UploadFile = File(...),
-    callback_url: Optional[str] = Form(None, description="Optional callback URL to notify when processing completes")
+    callback_url: Optional[str] = Form(None, description="Optional callback URL to notify when processing completes"),
+    client_id: Optional[str] = Form(None, description="Client identifier (UUID format)")
 ) -> Dict[str, Any]:
     """Process PBM contract documents and extract pharmacy benefits management information with optional callback notification"""
     # Create temporary file in Lambda's writable /tmp directory
@@ -277,8 +282,8 @@ async def process_pbm_document(
             # Document already processed, create a new task linked to the existing document
             logger.info(f"PBM Document with hash {file_hash} already exists, creating task with existing document ID")
             
-            # Create a new task with the existing document ID and callback URL
-            task_id = task_manager.create_task(document_id=existing_doc["id"], callback_url=callback_url)
+            # Create a new task with the existing document ID, callback URL, and client_id
+            task_id = task_manager.create_task(document_id=existing_doc["id"], callback_url=callback_url, client_id=client_id)
             
             # Update task status to completed since the document is already processed
             task_manager.update_task_status(task_id, TaskStatus.COMPLETED, document_id=existing_doc["id"])
@@ -305,8 +310,8 @@ async def process_pbm_document(
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         
-        # Create a new task with callback URL
-        task_id = task_manager.create_task(callback_url=callback_url)
+        # Create a new task with callback URL and client_id
+        task_id = task_manager.create_task(callback_url=callback_url, client_id=client_id)
         
         # Invoke Lambda function asynchronously (self-invocation)
         import boto3
@@ -339,7 +344,8 @@ async def process_pbm_document(
                 "s3_key": s3_key,
                 "file_hash": file_hash,
                 "original_filename": file.filename,
-                "task_id": task_id
+                "task_id": task_id,
+                "client_id": client_id
             }),
             "isBase64Encoded": False
         }

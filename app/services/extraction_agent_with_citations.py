@@ -46,7 +46,7 @@ Please extract information from the following contract document and return the i
 
 ### Important Instructions ###
 1. You MUST absolutely fill "ALL FIELDS" of the Schema that can be found from the document.
-2. If a value absolutely does not exist in the document, use null for optional fields and required fields(datetime, float) as specified, 'N/A' for required fields(string) as specified.
+2. If a value absolutely does not exist in the document, use null for ALL fields regardless of type.
 3. For each extracted field, you MUST provide source citations showing where you found the information.
 4. Return a JSON object with this structure:
 {{
@@ -69,7 +69,7 @@ Please extract information from the following contract document and return the i
   }}
 }}
 
-5. For dates, use ISO format (YYYY-MM-DD for dates, YYYY-MM-DDTHH:MM:SS for timestamps) in string format.
+5. For dates and datetimes, use DateTimeOffset format with timezone: YYYY-MM-DDTHH:MM:SS+00:00 (e.g., "2051-01-08T00:00:00+00:00") in string format.
 6. For numeric values, use float (not strings).
 7. When citing sources, use the EXACT citation markers shown in the document (e.g., [page 5], [paragraph 12], [Sheet1:A5]).
 8. If information comes from multiple sources, include ALL relevant sources in the sources array.

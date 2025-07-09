@@ -20,7 +20,7 @@ class TaskManager:
         self.tasks = {}  # In-memory cache of recent tasks
         self.callback_service = CallbackService()
         
-    def create_task(self, document_id=None, callback_url=None) -> str:
+    def create_task(self, document_id=None, callback_url=None, client_id=None) -> str:
         """Create a new task and return its ID"""
         task_id = str(uuid.uuid4())
         timestamp = datetime.now().isoformat()
@@ -32,7 +32,8 @@ class TaskManager:
             "updated_at": timestamp,
             "document_id": document_id,
             "error": None,
-            "callback_url": callback_url
+            "callback_url": callback_url,
+            "client_id": client_id
         }
         
         # Store in database
@@ -86,7 +87,8 @@ class TaskManager:
                 "updated_at": timestamp,
                 "document_id": document_id or task_data.get("document_id"),
                 "error": error,
-                "callback_url": task_data.get("callback_url")
+                "callback_url": task_data.get("callback_url"),
+                "client_id": task_data.get("client_id")
             }
             
         # Update database
@@ -137,6 +139,10 @@ class TaskManager:
                     from app.core.config import settings
                     s3_url = f"https://{settings.S3_BUCKET_NAME}.s3.{settings.AWS_REGION}.amazonaws.com/{task_data['s3_key']}"
                     extracted_data["S3FilePath"] = s3_url
+                
+                # Add ClientId to the extracted data if present
+                if task_data.get("client_id"):
+                    extracted_data["ClientId"] = task_data["client_id"]
                 
                 # Send extracted data directly as callback payload
                 success = self.callback_service.send_callback(callback_url, extracted_data)

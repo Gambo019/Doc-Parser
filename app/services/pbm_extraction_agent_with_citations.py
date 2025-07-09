@@ -91,9 +91,9 @@ Please extract information from the following PBM (Pharmacy Benefits Management)
   }}
 }}
 
-8. If a value absolutely does not exist in the document, use null for all fields as they are all optional except ContractType.
+8. If a value absolutely does not exist in the document, use null for all fields regardless of type.
 
-9. For dates, use ISO format (YYYY-MM-DD for dates, YYYY-MM-DDTHH:MM:SS for timestamps) in string format.
+9. For dates and datetimes, use DateTimeOffset format with timezone: YYYY-MM-DDTHH:MM:SS+00:00 (e.g., "2051-01-08T00:00:00+00:00") in string format.
 
 10. When citing sources, use the EXACT citation markers shown in the document (e.g., [page 5], [Section 4.1: Pricing], [paragraph 12]).
 

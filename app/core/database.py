@@ -52,7 +52,7 @@ class Database:
                 )
                 """)
                 
-                # Create tasks table with callback_url field
+                # Create tasks table with callback_url and client_id fields
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tasks (
                     task_id VARCHAR(36) PRIMARY KEY,
@@ -61,7 +61,8 @@ class Database:
                     updated_at TIMESTAMP NOT NULL,
                     document_id INTEGER REFERENCES documents(id),
                     error TEXT,
-                    callback_url TEXT
+                    callback_url TEXT,
+                    client_id VARCHAR(36)
                 )
                 """)
                 
@@ -83,6 +84,17 @@ class Database:
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                                   WHERE table_name='documents' AND column_name='citations') THEN
                         ALTER TABLE documents ADD COLUMN citations JSONB;
+                    END IF;
+                END $$;
+                """)
+                
+                # Add client_id column if it doesn't exist (for existing installations)
+                cursor.execute("""
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                  WHERE table_name='tasks' AND column_name='client_id') THEN
+                        ALTER TABLE tasks ADD COLUMN client_id VARCHAR(36);
                     END IF;
                 END $$;
                 """)
@@ -150,8 +162,8 @@ class Database:
                 cursor.execute(
                     """
                     INSERT INTO tasks 
-                    (task_id, status, created_at, updated_at, document_id, error, callback_url)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (task_id, status, created_at, updated_at, document_id, error, callback_url, client_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         task_data["task_id"],
@@ -160,7 +172,8 @@ class Database:
                         task_data["updated_at"],
                         task_data.get("document_id"),
                         task_data.get("error"),
-                        task_data.get("callback_url")
+                        task_data.get("callback_url"),
+                        task_data.get("client_id")
                     )
                 )
                 self.conn.commit()
@@ -177,7 +190,7 @@ class Database:
                 cursor.execute(
                     """
                     UPDATE tasks 
-                    SET status = %s, updated_at = %s, document_id = %s, error = %s, callback_url = %s
+                    SET status = %s, updated_at = %s, document_id = %s, error = %s, callback_url = %s, client_id = %s
                     WHERE task_id = %s
                     """,
                     (
@@ -186,6 +199,7 @@ class Database:
                         task_data.get("document_id"),
                         task_data.get("error"),
                         task_data.get("callback_url"),
+                        task_data.get("client_id"),
                         task_id
                     )
                 )
