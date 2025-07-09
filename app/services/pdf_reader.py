@@ -5,6 +5,8 @@ from pathlib import Path
 import pytesseract
 from pdf2image import convert_from_path
 from PIL import Image
+import re
+from app.models.citation import StructuredContent, SourceLocation, SourceType
 
 class PDFReader:
     def __init__(self, file_path: str):
@@ -98,4 +100,125 @@ class PDFReader:
         """Get PDF metadata"""
         if self.pdf_reader:
             return dict(self.pdf_reader.metadata)
-        return {} 
+        return {}
+    
+    def get_structured_content(self) -> List[StructuredContent]:
+        """Get content with source location tracking"""
+        structured_content = []
+        
+        if not self.pdf_reader:
+            return structured_content
+        
+        if not self.needs_ocr:
+            # Use regular PDF text extraction with page tracking
+            for page_num, page in enumerate(self.pdf_reader.pages, 1):
+                page_text = page.extract_text().strip()
+                if page_text:
+                    # Split into sections/paragraphs for better granularity
+                    sections = self._split_into_sections(page_text)
+                    for i, section in enumerate(sections):
+                        if section.strip():
+                            source_location = SourceLocation(
+                                type=SourceType.PAGE,
+                                reference=f"page {page_num}",
+                                text=section[:200] + "..." if len(section) > 200 else section
+                            )
+                            structured_content.append(StructuredContent(
+                                content=section,
+                                source_location=source_location
+                            ))
+        else:
+            # Use OCR with page tracking
+            try:
+                with TemporaryDirectory() as tempdir:
+                    pdf_pages = convert_from_path(self.file_path, 500)
+                    
+                    for page_enumeration, page in enumerate(pdf_pages, start=1):
+                        filename = f"{tempdir}/page_{page_enumeration:03}.jpg"
+                        page.save(filename, "JPEG")
+                        
+                        try:
+                            text = str(pytesseract.image_to_string(Image.open(filename)))
+                            text = text.replace("-\n", "").strip()
+                            
+                            if text:
+                                sections = self._split_into_sections(text)
+                                for section in sections:
+                                    if section.strip():
+                                        source_location = SourceLocation(
+                                            type=SourceType.PAGE,
+                                            reference=f"page {page_enumeration}",
+                                            text=section[:200] + "..." if len(section) > 200 else section
+                                        )
+                                        structured_content.append(StructuredContent(
+                                            content=section,
+                                            source_location=source_location
+                                        ))
+                        except Exception as e:
+                            print(f"OCR error on page {page_enumeration}: {str(e)}")
+                            # Fall back to regular PDF extraction
+                            if page_enumeration <= len(self.pdf_reader.pages):
+                                page_text = self.pdf_reader.pages[page_enumeration-1].extract_text().strip()
+                                if page_text:
+                                    source_location = SourceLocation(
+                                        type=SourceType.PAGE,
+                                        reference=f"page {page_enumeration}",
+                                        text=page_text[:200] + "..." if len(page_text) > 200 else page_text
+                                    )
+                                    structured_content.append(StructuredContent(
+                                        content=page_text,
+                                        source_location=source_location
+                                    ))
+            except Exception as e:
+                print(f"OCR processing error: {str(e)}")
+                # Fall back to regular PDF extraction
+                for page_num, page in enumerate(self.pdf_reader.pages, 1):
+                    page_text = page.extract_text().strip()
+                    if page_text:
+                        source_location = SourceLocation(
+                            type=SourceType.PAGE,
+                            reference=f"page {page_num}",
+                            text=page_text[:200] + "..." if len(page_text) > 200 else page_text
+                        )
+                        structured_content.append(StructuredContent(
+                            content=page_text,
+                            source_location=source_location
+                        ))
+        
+        return structured_content
+    
+    def _split_into_sections(self, text: str) -> List[str]:
+        """Split text into logical sections for better source tracking"""
+        # Split by multiple newlines (paragraph breaks)
+        sections = re.split(r'\n\s*\n', text)
+        
+        # Further split very long sections
+        final_sections = []
+        for section in sections:
+            if len(section) > 1000:  # Split long sections
+                # Try to split by sentences
+                sentences = re.split(r'(?<=[.!?])\s+', section)
+                current_section = ""
+                for sentence in sentences:
+                    if len(current_section + sentence) > 1000 and current_section:
+                        final_sections.append(current_section.strip())
+                        current_section = sentence
+                    else:
+                        current_section += " " + sentence if current_section else sentence
+                if current_section:
+                    final_sections.append(current_section.strip())
+            else:
+                final_sections.append(section.strip())
+        
+        return [s for s in final_sections if s.strip()]
+    
+    def get_content_with_citations(self) -> str:
+        """Get full text with embedded citation markers"""
+        structured_content = self.get_structured_content()
+        content_with_citations = []
+        
+        for i, content in enumerate(structured_content):
+            citation_marker = f"[{content.source_location.reference}]"
+            content_with_citations.append(f"{citation_marker} {content.content}")
+        
+        return "\n\n".join(content_with_citations) 
