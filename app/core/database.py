@@ -46,6 +46,7 @@ class Database:
                     s3_key VARCHAR(255),
                     extracted_data JSONB,
                     validation_status JSONB,
+                    citations JSONB,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -75,6 +76,17 @@ class Database:
                 END $$;
                 """)
                 
+                # Add citations column if it doesn't exist (for existing installations)
+                cursor.execute("""
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                  WHERE table_name='documents' AND column_name='citations') THEN
+                        ALTER TABLE documents ADD COLUMN citations JSONB;
+                    END IF;
+                END $$;
+                """)
+                
                 self.conn.commit()
                 logger.info("Database tables created or already exist")
         except Exception as e:
@@ -95,27 +107,32 @@ class Database:
             logger.error(f"Error fetching document: {str(e)}")
             return None
             
-    def save_document(self, file_hash, file_name, file_size, s3_key, extracted_data, validation_status):
-        """Save document to database"""
+    def save_document(self, file_hash, file_name, file_size, s3_key, extracted_data, validation_status, citations=None):
+        """Save document to database with separate citations storage"""
         try:
             # Convert data to JSON strings with custom encoder for datetime objects
             extracted_data_json = json.dumps(extracted_data, cls=DateTimeEncoder)
             validation_status_json = json.dumps(validation_status, cls=DateTimeEncoder)
+            citations_json = json.dumps(citations, cls=DateTimeEncoder) if citations else None
             
             with self.conn.cursor() as cursor:
                 cursor.execute(
                     """
                     INSERT INTO documents 
-                    (file_hash, file_name, file_size, s3_key, extracted_data, validation_status)
-                    VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb)
+                    (file_hash, file_name, file_size, s3_key, extracted_data, validation_status, citations)
+                    VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb)
                     ON CONFLICT (file_hash) 
                     DO UPDATE SET
-                        updated_at = CURRENT_TIMESTAMP
+                        updated_at = CURRENT_TIMESTAMP,
+                        extracted_data = EXCLUDED.extracted_data,
+                        validation_status = EXCLUDED.validation_status,
+                        citations = EXCLUDED.citations
                     RETURNING id
                     """,
                     (file_hash, file_name, file_size, s3_key, 
                      extracted_data_json, 
-                     validation_status_json)
+                     validation_status_json,
+                     citations_json)
                 )
                 document_id = cursor.fetchone()[0]
                 self.conn.commit()
@@ -202,6 +219,7 @@ class Database:
                         t.*,
                         d.extracted_data,
                         d.validation_status,
+                        d.citations,
                         d.s3_key,
                         d.file_name
                     FROM tasks t

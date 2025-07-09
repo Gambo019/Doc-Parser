@@ -12,11 +12,10 @@ from app.services.validation_agent import ValidationAgent
 class DocumentProcessor:
     """Main document processing workflow"""
     
-    def __init__(self, enable_citations: bool = True):
+    def __init__(self):
         self.classifier = DocumentClassifierAgent()
-        self.extractor = ExtractionAgentWithCitations() if enable_citations else ExtractionAgent()
+        self.extractor = ExtractionAgentWithCitations()  # Citations are now mandatory
         self.validator = ValidationAgent()
-        self.enable_citations = enable_citations
         
     def process_document(self, file_path: str) -> Dict[str, Any]:
         """Process document and extract information"""
@@ -44,48 +43,28 @@ class DocumentProcessor:
         # Read document
         metadata = reader.get_metadata()
         
-        if self.enable_citations:
-            # Use structured content for citation tracking
-            structured_content = reader.get_structured_content() if hasattr(reader, 'get_structured_content') else []
-            if not structured_content:
-                # Fallback to regular content if structured content is not available
-                content = reader.get_full_text() if hasattr(reader, 'get_full_text') else str(reader.get_all_sheets_data())
-                # Use regular extractor as fallback
-                extractor = ExtractionAgent()
-                extracted_result = extractor.extract(metadata, content)
-                return {
-                    "extracted_data": extracted_result,
-                    "validation_status": self.validator.validate(extracted_result),
-                    "doc_type": doc_type,
-                    "citations": None,
-                    "citation_error": "Structured content not available for this document type"
-                }
-            
-            # Extract information with citations
-            extraction_result = self.extractor.extract(metadata, structured_content)
-            extracted_data = extraction_result.get("extracted_data", {})
-            
-        else:
-            # Use regular extraction without citations
-            content = reader.get_full_text() if hasattr(reader, 'get_full_text') else str(reader.get_all_sheets_data())
-            extracted_data = self.extractor.extract(metadata, content)
-            extraction_result = {"extracted_data": extracted_data}
+        # Use structured content for citation tracking (mandatory)
+        structured_content = reader.get_structured_content() if hasattr(reader, 'get_structured_content') else []
+        if not structured_content:
+            # Citations are mandatory, so we cannot process documents without structured content
+            raise ValueError(f"Structured content required for citations but not available for document type: {doc_type}")
+        
+        # Extract information with citations (mandatory)
+        extraction_result = self.extractor.extract(metadata, structured_content)
+        extracted_data = extraction_result.get("extracted_data", {})
         
         # Validate extracted data
         validation_status = self.validator.validate(extracted_data)
         
-        # Prepare return object
+        # Prepare return object with mandatory citations
         result = {
             "extracted_data": extracted_data,
             "validation_status": validation_status,
-            "doc_type": doc_type
+            "doc_type": doc_type,
+            "citations": extraction_result.get("citations", {}),
+            "source_summary": extraction_result.get("source_summary", {}),
+            "citation_validation": extraction_result.get("validation_status", {})
         }
-        
-        # Add citation information if enabled
-        if self.enable_citations and "citations" in extraction_result:
-            result["citations"] = extraction_result["citations"]
-            result["source_summary"] = extraction_result.get("source_summary", {})
-            result["citation_validation"] = extraction_result.get("validation_status", {})
         
         return result
     

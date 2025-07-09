@@ -199,7 +199,7 @@ async def internal_process_document(request: InternalProcessRequest = Body(...))
     tmp_path = None
     try:
         # Process document from S3
-        processor = DocumentProcessor(enable_citations=True)
+        processor = DocumentProcessor()  # Citations are now mandatory by default
         logger.info(f"Processing document from S3: {request.s3_key}")
         
         # Download file from S3 to temp location
@@ -232,7 +232,8 @@ async def internal_process_document(request: InternalProcessRequest = Body(...))
             file_size=file_size,
             s3_key=request.s3_key,
             extracted_data=result.get("extracted_data", {}),
-            validation_status=result.get("validation_status", {})
+            validation_status=result.get("validation_status", {}),
+            citations=result.get("citations", {})
         )
         
         # Update task status to completed with document_id
@@ -369,7 +370,7 @@ async def internal_process_pbm_document(request: InternalProcessPBMRequest = Bod
     tmp_path = None
     try:
         # Process PBM document from S3
-        processor = PBMDocumentProcessor(enable_citations=True)
+        processor = PBMDocumentProcessor()  # Citations are now mandatory by default
         logger.info(f"Processing PBM document from S3: {request.s3_key}")
         
         # Download file from S3 to temp location
@@ -402,7 +403,8 @@ async def internal_process_pbm_document(request: InternalProcessPBMRequest = Bod
             file_size=file_size,
             s3_key=request.s3_key,
             extracted_data=result.get("extracted_data", {}),
-            validation_status=result.get("validation_status", {})
+            validation_status=result.get("validation_status", {}),
+            citations=result.get("citations", {})
         )
         
         # Update task status to completed with document_id
