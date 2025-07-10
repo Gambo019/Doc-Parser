@@ -1,6 +1,7 @@
 import requests
 from typing import Dict, Any
 from app.core.logger import logger
+from app.core.config import settings
 from datetime import datetime
 
 def serialize_datetimes(obj):
@@ -32,7 +33,8 @@ class CallbackService:
                 json=payload,
                 headers={
                     "Content-Type": "application/json",
-                    "User-Agent": "AI-API-Parser/1.0"
+                    "User-Agent": "AI-API-Parser/1.0",
+                    "apiKey": settings.API_KEY
                 },
                 timeout=self.timeout
             )
