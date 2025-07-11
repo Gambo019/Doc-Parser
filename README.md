@@ -9,6 +9,11 @@ A FastAPI-based document processing engine that can extract structured informati
   - Word documents (.doc, .docx)
   - Excel spreadsheets (.xlsx, .xls)
   - CSV files (.csv)
+- **Comprehensive file validation and security:**
+  - File extension validation
+  - Magic byte signature verification
+  - MIME type checking
+  - Anti-spoofing protection
 - Automatic document type classification
 - Structured information extraction using LLM
 - Metadata extraction
@@ -309,17 +314,102 @@ async def process_callback(request: Request):
 - Microsoft Excel spreadsheets (.xlsx, .xls)
 - CSV files (.csv)
 
+## File Validation & Security
+
+The application implements comprehensive file validation to ensure security and prevent file type spoofing attacks. All uploaded files undergo multi-layer validation before processing:
+
+### Validation Layers
+
+1. **File Extension Check**: Only allows supported extensions (`.pdf`, `.doc`, `.docx`, `.xlsx`, `.xls`, `.csv`)
+2. **Magic Byte Signature Verification**: Checks actual file signatures to prevent spoofing
+3. **MIME Type Validation**: Cross-references detected MIME types with expected types
+4. **Content Structure Validation**: Format-specific checks (e.g., CSV parsing, Office document structure)
+
+### Security Features
+
+- **Anti-Spoofing Protection**: Prevents malicious files with fake extensions (e.g., executable renamed to `.pdf`)
+- **File Corruption Detection**: Identifies corrupted or invalid files early in the process
+- **Empty File Prevention**: Rejects empty files before processing
+
+### File Type Validation Details
+
+| File Type | Extensions | Magic Bytes | MIME Types |
+|-----------|------------|-------------|------------|
+| **PDF** | `.pdf` | `%PDF` header | `application/pdf` |
+| **Excel (Modern)** | `.xlsx` | ZIP signature (`PK`) | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` |
+| **Excel (Legacy)** | `.xls` | OLE compound document | `application/vnd.ms-excel` |
+| **Word (Modern)** | `.docx` | ZIP signature (`PK`) | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` |
+| **Word (Legacy)** | `.doc` | OLE compound document | `application/msword` |
+| **CSV** | `.csv` | Text content | `text/csv`, `text/plain` |
+
+### Validation Examples
+
+**✅ Valid uploads:**
+- `contract.pdf` with valid PDF signature
+- `data.xlsx` with proper Office ZIP structure
+- `report.csv` with readable CSV content
+
+**❌ Invalid uploads (rejected with error):**
+- `malware.exe` renamed to `contract.pdf`
+- `image.jpg` renamed to `data.xlsx`
+- Corrupted or empty files
+- Unsupported file types (`.txt`, `.png`, `.zip`, etc.)
+
+### Error Messages
+
+When validation fails, users receive descriptive error messages:
+
+```json
+{
+  "detail": "File validation failed: Invalid PDF signature. File may be corrupted or not a real PDF. Supported extensions: .csv, .doc, .docx, .pdf, .xls, .xlsx"
+}
+```
+
+Common validation errors:
+- `"Unsupported file extension"` - File type not supported
+- `"Invalid [TYPE] signature"` - File doesn't match expected format
+- `"MIME type mismatch"` - Content doesn't match extension
+- `"File is empty"` - Zero-byte file uploaded
+
 ## Error Handling
 
 The API returns appropriate HTTP status codes:
 - 200: Successful processing
-- 400: Invalid request or file format
+- 400: Invalid request, file format, or file validation failure
 - 422: Validation error
 - 500: Server error
 
-Error responses include a message explaining the error.
+### File Validation Errors (HTTP 400)
 
-Callback notifications are sent for both successful and failed processing attempts.
+File validation errors are returned immediately with descriptive messages:
+
+```json
+{
+  "detail": "File validation failed: [specific error message]. Supported extensions: .csv, .doc, .docx, .pdf, .xls, .xlsx"
+}
+```
+
+### Processing Errors
+
+For processing errors after validation succeeds, error responses include detailed messages explaining the error.
+
+Callback notifications are sent for both successful and failed processing attempts:
+
+**Successful processing callback:**
+```json
+{
+  "CustomerName": "...",
+  "extracted_data": {...}
+}
+```
+
+**Failed processing callback:**
+```json
+{
+  "error": "Error description",
+  "status": "failed"
+}
+```
 
 ## Development
 

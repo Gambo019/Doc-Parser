@@ -10,7 +10,7 @@ from pydantic import BaseModel
 # Import the DocumentProcessor from your existing code
 from app.services.document_processor import DocumentProcessor
 from app.services.pbm_document_processor import PBMDocumentProcessor
-from app.utils.file_utils import calculate_file_hash
+from app.utils.file_utils import calculate_file_hash, validate_uploaded_file, get_supported_file_extensions
 from app.core.database import Database
 from app.core.logger import logger
 from app.core.task_manager import TaskManager, TaskStatus
@@ -62,6 +62,20 @@ async def process_document(
         with NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], dir='/tmp') as tmp:
             shutil.copyfileobj(file.file, tmp)
             tmp_path = tmp.name
+        
+        # Validate file type and content
+        is_valid, detected_file_type, validation_error = validate_uploaded_file(tmp_path, file.filename)
+        if not is_valid:
+            # Clean up temp file
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            logger.warning(f"File validation failed for {file.filename}: {validation_error}")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"File validation failed: {validation_error}. Supported extensions: {', '.join(get_supported_file_extensions())}"
+            )
+        
+        logger.info(f"File validation successful: {file.filename} detected as {detected_file_type}")
         
         # Calculate file hash
         file_hash = calculate_file_hash(tmp_path)
@@ -194,8 +208,18 @@ async def welcome() -> Dict[str, Any]:
     return {
         "message": "Welcome to AI Doc Parser API",
         "status": "active",
-        "version": "1.0.1"
+        "version": "1.0.1",
+        "supported_file_types": {
+            "extensions": get_supported_file_extensions(),
+            "categories": {
+                "pdf": [".pdf"],
+                "spreadsheet": [".xlsx", ".xls", ".csv"],
+                "word": [".doc", ".docx"]
+            }
+        }
     }
+
+
 
 @app.post("/internal/process-document", include_in_schema=False)
 async def internal_process_document(request: InternalProcessRequest = Body(...)) -> Dict[str, Any]:
@@ -268,6 +292,20 @@ async def process_pbm_document(
         with NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], dir='/tmp') as tmp:
             shutil.copyfileobj(file.file, tmp)
             tmp_path = tmp.name
+        
+        # Validate file type and content
+        is_valid, detected_file_type, validation_error = validate_uploaded_file(tmp_path, file.filename)
+        if not is_valid:
+            # Clean up temp file
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            logger.warning(f"PBM file validation failed for {file.filename}: {validation_error}")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"File validation failed: {validation_error}. Supported extensions: {', '.join(get_supported_file_extensions())}"
+            )
+        
+        logger.info(f"PBM file validation successful: {file.filename} detected as {detected_file_type}")
         
         # Calculate file hash
         file_hash = calculate_file_hash(tmp_path)
