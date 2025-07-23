@@ -4,11 +4,11 @@ services:
     image: minio/minio:latest
     container_name: doc-parser-minio
     ports:
-      - "9000:9000"    # MinIO API
-      - "9001:9001"    # MinIO Console
+      - "${MINIO_API_PORT:-9000}:9000"    # MinIO API
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"    # MinIO Console
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin123
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
@@ -27,9 +27,9 @@ services:
     entrypoint: >
       /bin/sh -c "
       sleep 15;
-      /usr/bin/mc alias set minio http://minio:9000 minioadmin minioadmin123;
-      /usr/bin/mc mb minio/documents --ignore-existing;
-      /usr/bin/mc anonymous set public minio/documents;
+      /usr/bin/mc alias set minio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin123};
+      /usr/bin/mc mb minio/${S3_BUCKET_NAME:-documents} --ignore-existing;
+      /usr/bin/mc anonymous set public minio/${S3_BUCKET_NAME:-documents};
       /usr/bin/mc ls minio;
       echo 'MinIO setup completed successfully';
       "
@@ -39,15 +39,15 @@ services:
     image: postgres:15-alpine
     container_name: doc-parser-postgres
     environment:
-      POSTGRES_DB: docparser
-      POSTGRES_USER: docparser
-      POSTGRES_PASSWORD: docparser123
+      POSTGRES_DB: ${DB_NAME:-docparser}
+      POSTGRES_USER: ${DB_USER:-docparser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-docparser123}
     ports:
-      - "5433:5432"  # Changed to avoid conflict with system PostgreSQL
+      - "${DB_PORT:-5432}:5432"  # Use default PostgreSQL port 5432
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U docparser -d docparser"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-docparser} -d ${DB_NAME:-docparser}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -59,31 +59,31 @@ services:
       dockerfile: Dockerfile.local
     container_name: doc-parser-app
     ports:
-      - "8000:8000"
+      - "${APP_PORT:-8000}:8000"
     environment:
       # OpenAI API Key
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       
       # API Authentication
-      API_KEY: your-local-api-key
+      API_KEY: ${API_KEY}
       
       # Database Configuration
-      DB_HOST: postgres
-      DB_PORT: 5432  # Internal container port stays 5432
-      DB_NAME: docparser
-      DB_USER: docparser
-      DB_PASSWORD: docparser123
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}  # Internal container port stays 5432
+      DB_NAME: ${DB_NAME:-docparser}
+      DB_USER: ${DB_USER:-docparser}
+      DB_PASSWORD: ${DB_PASSWORD:-docparser123}
       
       # MinIO Configuration (S3-compatible)
-      S3_ENDPOINT_URL: http://minio:9000
-      S3_ACCESS_KEY_ID: minioadmin
-      S3_SECRET_ACCESS_KEY: minioadmin123
-      S3_BUCKET_NAME: documents
-      S3_REGION: us-east-1
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-minioadmin}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minioadmin123}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-documents}
+      S3_REGION: ${S3_REGION:-us-east-1}
       
       # Local Development Flags
-      RUNNING_IN_LAMBDA: false
-      USE_LOCAL_STORAGE: true
+      RUNNING_IN_LAMBDA: ${RUNNING_IN_LAMBDA:-false}
+      USE_LOCAL_STORAGE: ${USE_LOCAL_STORAGE:-true}
       
       # Disable Lambda-specific features
       AWS_LAMBDA_FUNCTION_NAME: ""

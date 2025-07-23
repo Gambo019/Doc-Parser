@@ -95,10 +95,13 @@ source venv/bin/activate # On Windows use: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-5. Create a `.env` file in the root directory and add your OpenAI API key:
+5. Create a `.env` file in the root directory with your configuration:
 ```
 OPENAI_API_KEY=<your-openai-api-key>
+API_KEY=<your-secure-api-key>
 ```
+
+For local development with Docker Compose, see [README.local.md](README.local.md) for the complete `.env` template.
 
 ## AWS Lambda Deployment
 

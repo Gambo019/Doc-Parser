@@ -10,8 +10,9 @@ git clone <repository-url>
 cd document-processing-engine
 ```
 
-2. **Create environment file:**
-Create a `.env` file in the root directory:
+2. **Environment Configuration:**
+The `.env` file will be automatically created when you run `./start-local.sh`. 
+You can also create it manually using this template:
 ```bash
 # OpenAI Configuration
 OPENAI_API_KEY=your-openai-api-key-here
@@ -19,15 +20,15 @@ OPENAI_API_KEY=your-openai-api-key-here
 # API Authentication (change this to a secure random string)
 API_KEY=your-secure-api-key-here
 
-# Database Configuration  
-DB_HOST=localhost
-DB_PORT=5433
+# Database Configuration (using default PostgreSQL port)
+DB_HOST=postgres
+DB_PORT=5432
 DB_NAME=docparser
 DB_USER=docparser
 DB_PASSWORD=docparser123
 
-# MinIO Configuration (S3-compatible storage)
-S3_ENDPOINT_URL=http://localhost:9000
+# Storage Configuration (S3-compatible - MinIO for local development)
+S3_ENDPOINT_URL=http://minio:9000
 S3_ACCESS_KEY_ID=minioadmin
 S3_SECRET_ACCESS_KEY=minioadmin123
 S3_BUCKET_NAME=documents
@@ -36,7 +37,16 @@ S3_REGION=us-east-1
 # Local Development Flags
 RUNNING_IN_LAMBDA=false
 USE_LOCAL_STORAGE=true
+
+# Docker Compose Configuration (these are used by docker-compose.yml, not the app)
+APP_PORT=8000
+MINIO_API_PORT=9000
+MINIO_CONSOLE_PORT=9001
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=minioadmin123
 ```
+
+**Note:** All configuration is now centralized in the `.env` file. The startup script will create this file automatically if it doesn't exist.
 
 3. **Start the services:**
 ```bash
@@ -52,7 +62,7 @@ docker compose up -d
 - **API**: http://localhost:8000
 - **API Documentation**: http://localhost:8000/docs
 - **MinIO Console**: http://localhost:9001 (login: minioadmin/minioadmin123)
-- **Database**: localhost:5433
+- **Database**: localhost:5432
 
 ## Services
 
@@ -65,7 +75,7 @@ docker compose up -d
 
 ### PostgreSQL (Database)
 - **Purpose**: Stores task status, document metadata, and extracted data
-- **Host**: localhost:5433
+- **Host**: localhost:5432
 - **Database**: docparser
 - **Credentials**: docparser / docparser123
 
@@ -145,7 +155,7 @@ docker compose restart app
 docker compose exec postgres psql -U docparser -d docparser
 
 # Using local client
-psql -h localhost -p 5433 -U docparser -d docparser
+psql -h localhost -p 5432 -U docparser -d docparser
 ```
 
 ### View Tables
@@ -193,7 +203,7 @@ services:
       - "8001:8000"  # Change 8000 to 8001
   postgres:
     ports:
-      - "5433:5432"  # Change 5432 to 5433
+      - "5432:5432"  # Change 5432 to 5432
   minio:
     ports:
       - "9002:9000"  # Change 9000 to 9002
@@ -267,7 +277,7 @@ This local setup is for development only. For production:
 | `OPENAI_API_KEY` | OpenAI API key for document processing | - | Yes |
 | `API_KEY` | Internal API authentication key | - | Yes |
 | `DB_HOST` | PostgreSQL host | localhost | Yes |
-| `DB_PORT` | PostgreSQL port | 5433 | Yes |
+| `DB_PORT` | PostgreSQL port | 5432 | Yes |
 | `DB_NAME` | PostgreSQL database name | docparser | Yes |
 | `DB_USER` | PostgreSQL username | docparser | Yes |
 | `DB_PASSWORD` | PostgreSQL password | docparser123 | Yes |

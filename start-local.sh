@@ -47,6 +47,10 @@ if ss -tln | grep -q ":8000 "; then
     ports_in_use+=("8000 (API server)")
 fi
 
+if ss -tln | grep -q ":5432 "; then
+    ports_in_use+=("5432 (PostgreSQL)")
+fi
+
 if ss -tln | grep -q ":9000 "; then
     ports_in_use+=("9000 (MinIO API)")
 fi
@@ -90,7 +94,7 @@ DB_NAME=docparser
 DB_USER=docparser
 DB_PASSWORD=docparser123
 
-# MinIO Configuration (S3-compatible storage)
+# Storage Configuration (S3-compatible - MinIO for local development)
 S3_ENDPOINT_URL=http://minio:9000
 S3_ACCESS_KEY_ID=minioadmin
 S3_SECRET_ACCESS_KEY=minioadmin123
@@ -100,6 +104,13 @@ S3_REGION=us-east-1
 # Local Development Flags
 RUNNING_IN_LAMBDA=false
 USE_LOCAL_STORAGE=true
+
+# Docker Compose Configuration (these are used by docker-compose.yml, not the app)
+APP_PORT=8000
+MINIO_API_PORT=9000
+MINIO_CONSOLE_PORT=9001
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=minioadmin123
 EOF
     
     echo "✅ Created .env file"
@@ -174,7 +185,7 @@ echo "📍 Access Points:"
 echo "   • API Server:          http://localhost:8000"
 echo "   • API Documentation:   http://localhost:8000/docs"
 echo "   • MinIO Console:       http://localhost:9001"
-echo "   • Database:            localhost:5433"
+echo "   • Database:            http://localhost:5432"
 echo ""
 echo "🔐 Credentials:"
 echo "   • MinIO Console:       minioadmin / minioadmin123"
