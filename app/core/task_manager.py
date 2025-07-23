@@ -135,9 +135,12 @@ class TaskManager:
                     extracted_data["Filename"] = task_data["file_name"]
                 
                 if task_data.get("s3_key"):
-                    # Construct full S3 URL
+                    # Construct storage URL (S3 or MinIO)
                     from app.core.config import settings
-                    s3_url = f"https://{settings.S3_BUCKET_NAME}.s3.{settings.AWS_REGION}.amazonaws.com/{task_data['s3_key']}"
+                    from app.core.storage import S3Storage
+                    
+                    storage = S3Storage()
+                    s3_url = storage.get_public_url(task_data["s3_key"])
                     extracted_data["S3FilePath"] = s3_url
                 
                 # Add ClientId to the extracted data if present

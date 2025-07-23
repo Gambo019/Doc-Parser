@@ -1,0 +1,109 @@
+services:
+  # MinIO - S3-compatible object storage
+  minio:
+    image: minio/minio:latest
+    container_name: doc-parser-minio
+    ports:
+      - "9000:9000"    # MinIO API
+      - "9001:9001"    # MinIO Console
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # MinIO Client - Create bucket on startup
+  minio-setup:
+    image: minio/mc:latest
+    container_name: doc-parser-minio-setup
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 15;
+      /usr/bin/mc alias set minio http://minio:9000 minioadmin minioadmin123;
+      /usr/bin/mc mb minio/documents --ignore-existing;
+      /usr/bin/mc anonymous set public minio/documents;
+      /usr/bin/mc ls minio;
+      echo 'MinIO setup completed successfully';
+      "
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: doc-parser-postgres
+    environment:
+      POSTGRES_DB: docparser
+      POSTGRES_USER: docparser
+      POSTGRES_PASSWORD: docparser123
+    ports:
+      - "5433:5432"  # Changed to avoid conflict with system PostgreSQL
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docparser -d docparser"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Document Processing Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    container_name: doc-parser-app
+    ports:
+      - "8000:8000"
+    environment:
+      # OpenAI API Key
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      
+      # API Authentication
+      API_KEY: your-local-api-key
+      
+      # Database Configuration
+      DB_HOST: postgres
+      DB_PORT: 5432  # Internal container port stays 5432
+      DB_NAME: docparser
+      DB_USER: docparser
+      DB_PASSWORD: docparser123
+      
+      # MinIO Configuration (S3-compatible)
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin123
+      S3_BUCKET_NAME: documents
+      S3_REGION: us-east-1
+      
+      # Local Development Flags
+      RUNNING_IN_LAMBDA: false
+      USE_LOCAL_STORAGE: true
+      
+      # Disable Lambda-specific features
+      AWS_LAMBDA_FUNCTION_NAME: ""
+    volumes:
+      - ./:/app
+      - /tmp:/tmp
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-setup:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  minio_data:
+  postgres_data:
+
+networks:
+  default:
+    name: doc-parser-network 

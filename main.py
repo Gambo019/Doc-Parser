@@ -6,6 +6,9 @@ from typing import Dict, Any, Optional
 from tempfile import NamedTemporaryFile
 import tempfile
 from pydantic import BaseModel
+import asyncio
+import httpx
+import threading
 
 # Import the DocumentProcessor from your existing code
 from app.services.document_processor import DocumentProcessor
@@ -15,6 +18,7 @@ from app.core.database import Database
 from app.core.logger import logger
 from app.core.task_manager import TaskManager, TaskStatus
 from app.core.storage import S3Storage
+from app.core.config import settings
 
 app = FastAPI()
 
@@ -27,8 +31,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Set Lambda's temp directory
-tempfile.tempdir = '/tmp'
+# Set temp directory
+if settings.RUNNING_IN_LAMBDA:
+    tempfile.tempdir = '/tmp'
+else:
+    tempfile.tempdir = '/tmp'  # Works for Docker containers too
 
 # Initialize task manager
 task_manager = TaskManager()
@@ -49,6 +56,66 @@ class InternalProcessPBMRequest(BaseModel):
     task_id: str
     client_id: Optional[str] = None
 
+async def process_document_async(s3_key: str, file_hash: str, original_filename: str, task_id: str, client_id: Optional[str] = None):
+    """Process document asynchronously for local development"""
+    try:
+        # Call internal processing endpoint
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            payload = {
+                "s3_key": s3_key,
+                "file_hash": file_hash,
+                "original_filename": original_filename,
+                "task_id": task_id,
+                "client_id": client_id
+            }
+            
+            # Make internal API call
+            response = await client.post(
+                "http://localhost:8000/internal/process-document",
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Internal processing failed: {response.text}")
+                task_manager.update_task_status(task_id, TaskStatus.FAILED, error=f"Processing failed: {response.text}")
+            else:
+                logger.info(f"Document processing completed for task {task_id}")
+                
+    except Exception as e:
+        logger.error(f"Error in async document processing: {str(e)}")
+        task_manager.update_task_status(task_id, TaskStatus.FAILED, error=str(e))
+
+async def process_pbm_document_async(s3_key: str, file_hash: str, original_filename: str, task_id: str, client_id: Optional[str] = None):
+    """Process PBM document asynchronously for local development"""
+    try:
+        # Call internal processing endpoint
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            payload = {
+                "s3_key": s3_key,
+                "file_hash": file_hash,
+                "original_filename": original_filename,
+                "task_id": task_id,
+                "client_id": client_id
+            }
+            
+            # Make internal API call
+            response = await client.post(
+                "http://localhost:8000/internal/process-pbm-document",
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Internal PBM processing failed: {response.text}")
+                task_manager.update_task_status(task_id, TaskStatus.FAILED, error=f"Processing failed: {response.text}")
+            else:
+                logger.info(f"PBM document processing completed for task {task_id}")
+                
+    except Exception as e:
+        logger.error(f"Error in async PBM document processing: {str(e)}")
+        task_manager.update_task_status(task_id, TaskStatus.FAILED, error=str(e))
+
 @app.post("/api/process-document")
 async def process_document(
     file: UploadFile = File(...),
@@ -59,7 +126,7 @@ async def process_document(
     # Create temporary file in Lambda's writable /tmp directory
     tmp_path = None
     try:
-        with NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], dir='/tmp') as tmp:
+        with NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], dir=tempfile.tempdir) as tmp:
             shutil.copyfileobj(file.file, tmp)
             tmp_path = tmp.name
         
@@ -106,12 +173,12 @@ async def process_document(
                 "message": "Document already processed"
             }
         
-        # Upload file to S3
+        # Upload file to storage (S3 or MinIO)
         storage = S3Storage()
         s3_key = f"documents/{file_hash}{os.path.splitext(file.filename)[1]}"
         
         if not storage.upload_file(tmp_path, s3_key):
-            raise Exception(f"Failed to upload file to S3")
+            raise Exception(f"Failed to upload file to storage")
         
         # Clean up temp file after upload
         if os.path.exists(tmp_path):
@@ -120,49 +187,54 @@ async def process_document(
         # Create a new task with callback URL and client_id
         task_id = task_manager.create_task(callback_url=callback_url, client_id=client_id)
         
-        # Invoke Lambda function asynchronously (self-invocation)
-        import boto3
-        import json
-        
-        lambda_client = boto3.client('lambda')
-        
-        # Get current Lambda function name from environment
-        function_name = os.environ.get('AWS_LAMBDA_FUNCTION_NAME')
-        
-        # Prepare payload for internal endpoint - API Gateway v2 format
-        payload = {
-            "version": "2.0",
-            "routeKey": "POST /internal/process-document",
-            "rawPath": "/internal/process-document",
-            "rawQueryString": "",
-            "headers": {
-                "Content-Type": "application/json",
-                "X-API-Key": os.environ.get('API_KEY')  # Pass API key for authentication
-            },
-            "requestContext": {
-                "http": {
-                    "method": "POST",
-                    "path": "/internal/process-document",
-                    "sourceIp": "127.0.0.1",
-                    "userAgent": "boto3/lambda"
-                }
-            },
-            "body": json.dumps({
-                "s3_key": s3_key,
-                "file_hash": file_hash,
-                "original_filename": file.filename,
-                "task_id": task_id,
-                "client_id": client_id
-            }),
-            "isBase64Encoded": False
-        }
-        
-        # Invoke Lambda asynchronously
-        lambda_client.invoke(
-            FunctionName=function_name,
-            InvocationType='Event',  # Asynchronous invocation
-            Payload=json.dumps(payload)
-        )
+        # Process asynchronously
+        if settings.RUNNING_IN_LAMBDA:
+            # Lambda processing (original logic)
+            import boto3
+            import json
+            
+            lambda_client = boto3.client('lambda')
+            
+            # Get current Lambda function name from environment
+            function_name = os.environ.get('AWS_LAMBDA_FUNCTION_NAME')
+            
+            # Prepare payload for internal endpoint - API Gateway v2 format
+            payload = {
+                "version": "2.0",
+                "routeKey": "POST /internal/process-document",
+                "rawPath": "/internal/process-document",
+                "rawQueryString": "",
+                "headers": {
+                    "Content-Type": "application/json",
+                    "X-API-Key": os.environ.get('API_KEY')  # Pass API key for authentication
+                },
+                "requestContext": {
+                    "http": {
+                        "method": "POST",
+                        "path": "/internal/process-document",
+                        "sourceIp": "127.0.0.1",
+                        "userAgent": "boto3/lambda"
+                    }
+                },
+                "body": json.dumps({
+                    "s3_key": s3_key,
+                    "file_hash": file_hash,
+                    "original_filename": file.filename,
+                    "task_id": task_id,
+                    "client_id": client_id
+                }),
+                "isBase64Encoded": False
+            }
+            
+            # Invoke Lambda asynchronously
+            lambda_client.invoke(
+                FunctionName=function_name,
+                InvocationType='Event',  # Asynchronous invocation
+                Payload=json.dumps(payload)
+            )
+        else:
+            # Local async processing
+            asyncio.create_task(process_document_async(s3_key, file_hash, file.filename, task_id, client_id))
         
         return {
             "task_id": task_id,
@@ -289,7 +361,7 @@ async def process_pbm_document(
     # Create temporary file in Lambda's writable /tmp directory
     tmp_path = None
     try:
-        with NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], dir='/tmp') as tmp:
+        with NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], dir=tempfile.tempdir) as tmp:
             shutil.copyfileobj(file.file, tmp)
             tmp_path = tmp.name
         
@@ -337,12 +409,12 @@ async def process_pbm_document(
                 "document_type": "pbm_contract"
             }
         
-        # Upload file to S3
+        # Upload file to storage (S3 or MinIO)
         storage = S3Storage()
         s3_key = f"pbm_documents/{file_hash}{os.path.splitext(file.filename)[1]}"
         
         if not storage.upload_file(tmp_path, s3_key):
-            raise Exception(f"Failed to upload PBM file to S3")
+            raise Exception(f"Failed to upload PBM file to storage")
         
         # Clean up temp file after upload
         if os.path.exists(tmp_path):
@@ -351,49 +423,54 @@ async def process_pbm_document(
         # Create a new task with callback URL and client_id
         task_id = task_manager.create_task(callback_url=callback_url, client_id=client_id)
         
-        # Invoke Lambda function asynchronously (self-invocation)
-        import boto3
-        import json
-        
-        lambda_client = boto3.client('lambda')
-        
-        # Get current Lambda function name from environment
-        function_name = os.environ.get('AWS_LAMBDA_FUNCTION_NAME')
-        
-        # Prepare payload for internal PBM endpoint - API Gateway v2 format
-        payload = {
-            "version": "2.0",
-            "routeKey": "POST /internal/process-pbm-document",
-            "rawPath": "/internal/process-pbm-document",
-            "rawQueryString": "",
-            "headers": {
-                "Content-Type": "application/json",
-                "X-API-Key": os.environ.get('API_KEY')  # Pass API key for authentication
-            },
-            "requestContext": {
-                "http": {
-                    "method": "POST",
-                    "path": "/internal/process-pbm-document",
-                    "sourceIp": "127.0.0.1",
-                    "userAgent": "boto3/lambda"
-                }
-            },
-            "body": json.dumps({
-                "s3_key": s3_key,
-                "file_hash": file_hash,
-                "original_filename": file.filename,
-                "task_id": task_id,
-                "client_id": client_id
-            }),
-            "isBase64Encoded": False
-        }
-        
-        # Invoke Lambda asynchronously
-        lambda_client.invoke(
-            FunctionName=function_name,
-            InvocationType='Event',  # Asynchronous invocation
-            Payload=json.dumps(payload)
-        )
+        # Process asynchronously
+        if settings.RUNNING_IN_LAMBDA:
+            # Lambda processing (original logic)
+            import boto3
+            import json
+            
+            lambda_client = boto3.client('lambda')
+            
+            # Get current Lambda function name from environment
+            function_name = os.environ.get('AWS_LAMBDA_FUNCTION_NAME')
+            
+            # Prepare payload for internal PBM endpoint - API Gateway v2 format
+            payload = {
+                "version": "2.0",
+                "routeKey": "POST /internal/process-pbm-document",
+                "rawPath": "/internal/process-pbm-document",
+                "rawQueryString": "",
+                "headers": {
+                    "Content-Type": "application/json",
+                    "X-API-Key": os.environ.get('API_KEY')  # Pass API key for authentication
+                },
+                "requestContext": {
+                    "http": {
+                        "method": "POST",
+                        "path": "/internal/process-pbm-document",
+                        "sourceIp": "127.0.0.1",
+                        "userAgent": "boto3/lambda"
+                    }
+                },
+                "body": json.dumps({
+                    "s3_key": s3_key,
+                    "file_hash": file_hash,
+                    "original_filename": file.filename,
+                    "task_id": task_id,
+                    "client_id": client_id
+                }),
+                "isBase64Encoded": False
+            }
+            
+            # Invoke Lambda asynchronously
+            lambda_client.invoke(
+                FunctionName=function_name,
+                InvocationType='Event',  # Asynchronous invocation
+                Payload=json.dumps(payload)
+            )
+        else:
+            # Local async processing
+            asyncio.create_task(process_pbm_document_async(s3_key, file_hash, file.filename, task_id, client_id))
         
         return {
             "task_id": task_id,

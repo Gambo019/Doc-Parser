@@ -2,6 +2,8 @@
 
 A FastAPI-based document processing engine that can extract structured information from various document types including PDF, Word, and Excel files.
 
+> 🚀 **New!** Now supports **local development with Docker Compose + MinIO** for easy setup without AWS dependencies. Jump to [Quick Start](#-quick-start-docker-compose) or see the [Local Development Guide](README.local.md).
+
 ## Features
 
 - Support for multiple document formats:
@@ -23,12 +25,52 @@ A FastAPI-based document processing engine that can extract structured informati
 - **Callback mechanism for automatic result notifications**
 - Asynchronous task processing with status tracking
 
-## Prerequisites
+## Deployment Options
+
+This application supports two deployment methods:
+
+### 🐳 **Local Development with Docker Compose (Recommended)**
+- Uses MinIO instead of AWS S3
+- Complete containerized environment
+- One-command setup
+- See [Local Development Guide](README.local.md)
+
+### ☁️ **AWS Lambda Production Deployment**
+- Uses AWS S3, Lambda, and API Gateway
+- Terraform infrastructure as code
+- See [AWS Deployment](#aws-lambda-deployment) section below
+
+---
+
+## 🚀 Quick Start (Docker Compose)
+
+**Fastest way to get started:**
+
+```bash
+# 1. Generate secure API key
+./generate-api-key.sh
+
+# 2. Start the complete system
+./start-local.sh
+
+# 3. Access your API at http://localhost:8000/docs
+
+# 4. Clean up when done
+./cleanup.sh
+```
+
+**Requirements:** Docker and Docker Compose only!
+
+👉 **For detailed setup instructions, see [README.local.md](README.local.md)**
+
+---
+
+## Prerequisites (Manual Installation)
 
 - Python 3.11 or higher
 - pip (Python package installer)
 
-## Local Installation
+## Local Installation (Manual Python Setup)
 
 1. Clone the repository:
 ```bash
@@ -89,7 +131,15 @@ chmod +x deploy.sh
 
 ## Running the Application
 
-Start the server locally:
+### Option 1: Docker Compose (Recommended)
+```bash
+./start-local.sh
+```
+- **API**: http://localhost:8000
+- **MinIO Console**: http://localhost:9001
+- **Full setup guide**: [README.local.md](README.local.md)
+
+### Option 2: Manual Python Setup
 ```bash
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -410,6 +460,19 @@ Callback notifications are sent for both successful and failed processing attemp
   "status": "failed"
 }
 ```
+
+## Local Development Files
+
+When using Docker Compose setup, these additional files are available:
+
+- `docker-compose.yml` - Container orchestration
+- `Dockerfile.local` - Local development container
+- `start-local.sh` - One-command deployment script
+- `generate-api-key.sh` - Secure API key generator
+- `test-api.sh` - API testing script
+- `cleanup.sh` - Complete environment cleanup script
+- `install-docker.sh` - Docker installation helper
+- `README.local.md` - Detailed local setup guide
 
 ## Development
 
